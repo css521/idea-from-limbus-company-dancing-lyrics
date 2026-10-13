@@ -260,7 +260,7 @@ def load_qqmusic_lyrics(info, cache_reader=None, cancelled=lambda: False):
         if last_error is None:
             last_error = error
 
-    if last_error is not None and (result is None or result.document is None):
+    if last_error is not None and result is None:
         raise last_error
     return result if result is not None else LyricResult(None, "未找到可靠匹配的 QQ 音乐歌词，可点击“重新获取歌词”重试。")
 
@@ -295,7 +295,7 @@ def _find_mac_song_candidate(snapshot, cancelled=lambda: False):
         if cancelled():
             return None
         payload = {
-            "comm": {"ct": 11, "cv": 0},
+            "comm": {"ct": 26, "cv": 0},
             SEARCH_MODULE: {"module": SEARCH_MODULE, "method": "DoSearchForQQMusicDesktop",
                             "param": {"search_type": 0, "query": q, "page_num": 1, "num_per_page": 20}}
         }
@@ -328,8 +328,8 @@ def _find_mac_song_candidate(snapshot, cancelled=lambda: False):
         names = set().union(*(artist_names(x["name"]) for x in singers if isinstance(x, dict) and isinstance(x.get("name"), str)))
         if not isinstance(duration, (int, float)) or not math.isfinite(duration):
             continue
-        diff_ms = abs(duration * 1000 - snapshot.duration_ms)
-        if diff_ms > 8500:
+        diff_ms = abs(duration * 1000 - snapshot.duration_ms) if snapshot.duration_ms else 0
+        if snapshot.duration_ms > 0 and diff_ms > 8500:
             continue
         seen_mids.add(mid)
         if names == snap_artists:
@@ -601,7 +601,7 @@ class MacNeteasePlayer(QObject):
             generation, key, future = self._lyrics_job
             if future.done():
                 self._lyrics_job = None
-                if generation == self._generation and key == self.song_id:
+                if generation == self._generation:
                     try:
                         raw_result = future.result()
                         if hasattr(raw_result, "document"):
@@ -617,9 +617,13 @@ class MacNeteasePlayer(QObject):
                         else:
                             document = None
                             message = "本曲未匹配到歌词，保持空白。"
-                        self._cache[key] = document
-                        self._cache_msg[key] = message
-                        self._cache.move_to_end(key)
+                        current_key = self.song_id or key
+                        self._cache[current_key] = document
+                        self._cache_msg[current_key] = message
+                        self._cache.move_to_end(current_key)
+                        if key != current_key:
+                            self._cache[key] = document
+                            self._cache_msg[key] = message
                         while len(self._cache) > 32:
                             popped_k, _ = self._cache.popitem(last=False)
                             self._cache_msg.pop(popped_k, None)
@@ -650,6 +654,7 @@ class MacNeteasePlayer(QObject):
                 self._anchor = self.position()
                 self.playing = self.connected = False
                 self._generation += 1
+                self._lyrics_job = None
                 self._needs_lyrics = self.lyrics_received = False
                 self.song_id = ""
                 self.status = f"等待{self.source_short}播放；请确认它是系统当前播放来源。"
@@ -664,7 +669,13 @@ class MacNeteasePlayer(QObject):
                 self._active_source = "netease"
         now = self._clock() if captured is None else captured
         key = json.dumps([info.title, info.artist, info.duration_ms], ensure_ascii=False)
-        switched = key != self.song_id
+        same_track = (
+            bool(self.song_id)
+            and self.title == info.title
+            and self.artist == info.artist
+            and (self.duration == 0 or info.duration_ms == 0 or abs(info.duration_ms - self.duration) < 5000)
+        )
+        switched = not same_track
         raw_playing = (info.state == "playing" and info.rate > 0)
         audio_func = getattr(self, "_audio_running", is_mac_audio_output_running)
         try:
@@ -690,6 +701,7 @@ class MacNeteasePlayer(QObject):
         self._info = info
         if switched:
             self._generation += 1
+            self._lyrics_job = None
             self.lyrics_received = False
             self.document_changed.emit(None)
             if self._offset_store:

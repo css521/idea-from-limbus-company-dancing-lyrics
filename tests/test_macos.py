@@ -441,6 +441,30 @@ class MacPlayerTests(unittest.TestCase):
             self.assertEqual(res.document, doc)
             self.assertEqual(res.mid, "000z6RLz2OWlRY")
 
+    def test_song_duration_zero_to_positive_does_not_cancel_or_drop_lyrics(self):
+        doc = LyricDocument([LyricLine(1000, "冬眠歌词")], [])
+        self.player.apply(info("冬眠", artist="司南", duration=0))
+        self.player._tick()
+        self.assertEqual(len(self.executor.jobs), 2)
+        self.player.apply(info("冬眠", artist="司南", duration=240000))
+        self.executor.finish(1, doc)
+        self.player._tick()
+        self.assertIs(self.documents[-1], doc)
+        self.assertEqual(self.player.duration, 240000)
+
+    def test_fast_song_switching_cancels_previous_holding_and_loads_new_lyrics(self):
+        doc_b = LyricDocument([LyricLine(1000, "歌曲B歌词")], [])
+        self.player.apply(info("歌曲A", artist="歌手A"))
+        self.player._tick()
+        self.assertEqual(len(self.executor.jobs), 2)
+        self.player.apply(info("歌曲B", artist="歌手B"))
+        self.assertIsNone(self.player._lyrics_job)
+        self.player._tick()
+        self.assertEqual(len(self.executor.jobs), 3)
+        self.executor.finish(2, doc_b)
+        self.player._tick()
+        self.assertIs(self.documents[-1], doc_b)
+
     def test_screen_selection_and_overlay_binding(self):
         from overlay import LyricsOverlay
         from settings import Preferences, SettingsStore

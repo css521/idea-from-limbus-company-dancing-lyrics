@@ -144,7 +144,7 @@ def _search_song(snapshot, cancelled):
         _checkpoint(cancelled)
         try:
             data = request_json("https://u.y.qq.com/cgi-bin/musicu.fcg", {
-                "comm": {"ct": 11, "cv": 0},
+                "comm": {"ct": 26, "cv": 0},
                 SEARCH_MODULE: {"module": SEARCH_MODULE, "method": "DoSearchForQQMusicDesktop",
                                 "param": {"search_type": 0, "query": query, "page_num": 1, "num_per_page": 20}}})
             response = data.get(SEARCH_MODULE, {})

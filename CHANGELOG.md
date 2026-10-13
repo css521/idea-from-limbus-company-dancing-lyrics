@@ -2,6 +2,44 @@
 
 每次改动按日期追加记录，包含改动目的、涉及文件、测试与验证结果、影响或已知限制。
 
+## 2026-10-13：修复 QQ 音乐频繁获取失败（错误码 2001）与自动切歌歌词不重新加载问题
+
+### 改动
+
+- 解决 QQ 音乐热门歌曲搜索高频报错 2001（限制/不可用）导致歌词获取失败问题：
+  1. 根因剖析：在 `qqmusic_lyrics.py` 与 `macos_netease.py` 中，网络搜索请求体使用了旧版桌面客户端标识 `"comm": {"ct": 11, "cv": 0}`。对于热门歌曲（如司南《冬眠》、LBI利比《可我只是海》），QQ 音乐后端对 `ct: 11` 触发了严格频控与鉴权限制，直接返回 `code: 2001`，抛出 `ValueError("QQ 音乐歌曲搜索暂不可用")`。该异常导致播放器进入 10 秒重试等待（`_retry_at = now + 10`），桌面歌词出现“QQ 音乐歌词获取失败，可点击‘重新获取歌词’重试。”。
+  2. 将客户端标识全面升级为现代 QQ 音乐 PC 客户端标准标识 `"comm": {"ct": 26, "cv": 0}`：司南《冬眠》（43 句）、LBI利比《可我只是海》（44 句）、梁博《男孩 (Live)》（67 句）等热门歌曲均秒级返回 `code: 0` 并 100% 成功同步歌词。
+- 解决自动切换歌曲时歌词不会重新加载问题：
+  1. 根因 A（起播时长补全导致误判切歌）：macOS 系统的 `nowplaying-cli` 在刚切歌的第 1 个 tick 时往往先给出曲名和歌手，而 `duration` 为 0 或延迟上报；在第 2 个 tick 时才补齐准确时长。原代码单凭 `[title, artist, duration]` 序列化 JSON 判断 `switched`，导致同一首歌在 200ms 内触发两次切歌，`self._generation` 递增使得第一次发起的歌词请求结果在返回时因 generation 失配被当作陈旧任务直接丢弃。
+  2. 根因 B（旧任务阻塞新任务发起）：切歌发生时，如果上一首歌曲的后台歌词请求尚未完成，原代码没有重置 `self._lyrics_job`，导致切歌后当前 tick 看到 `self._lyrics_job is not None` 而无法提交新歌的加载任务，直到旧任务超时结束。
+  3. 优化解决方案：
+     - 重构切歌判定 `same_track`：同名同歌手在起播阶段从 0 补全为实际时长（或毫秒差异在容差内）时不认定为切歌，不递增 generation，不中断正在执行的加载任务；
+     - 切歌时立即解绑 `self._lyrics_job = None`，使切歌后的当前 tick 能够毫无延迟地立即提交新歌曲的歌词加载任务；
+     - 歌词接收改为 generation 周期校验（`if generation == self._generation:`），即使起播时长发生补全，也能平滑接收歌词并双向写入当前 key 缓存；
+     - 在 `_find_mac_song_candidate` 中兼容起播初期 `duration_ms == 0` 的情况，只要歌名与歌手精确匹配即可命中，消除起播初期的空白等待。
+- 重新使用 `tools/build_macos.py` 打包最新 `build/macos-dist/都市回响.app` 与 `artifacts/mac-release/city-echoes-0.6.0-beta.2-macos.1-arm64.zip`。
+
+### 测试与验证
+
+- 自动化单元测试：
+  - 在 `tests/test_macos.py` 中新增 `test_song_duration_zero_to_positive_does_not_cancel_or_drop_lyrics`，覆盖切歌起播 duration 为 0 到补全为正数时平滑接收歌词且不触发二次切歌。
+  - 在 `tests/test_macos.py` 中新增 `test_fast_song_switching_cancels_previous_holding_and_loads_new_lyrics`，覆盖快速切歌时旧任务即时解绑并立即发起新歌词加载。
+  - 运行 `./.venv/bin/python -m unittest tests/test_macos.py`：38 项测试全部通过（OK）。
+  - 运行全套相关测试：`test_core.py`、`test_workflow_docs.py`、`test_macos.py`、`test_mac_distribution.py`、`test_qqmusic.py`、`test_qqmusic_cache.py` 共 148 项测试全部通过（1 项 Windows 语法跳过）。
+- 真实网络检索与切歌实测：
+  - 测试司南《冬眠》（269s 及 0s 模拟）：成功获取 43 句歌词。
+  - 测试 LBI利比《可我只是海》（175s）：成功获取 44 句歌词。
+  - 测试梁博《男孩 (Live)》（310s）：成功获取 67 句歌词。
+- 发布包构建与审计：
+  - 执行 `./.venv/bin/python tools/build_macos.py --output-dir artifacts/mac-release`，成功生成应用与归档文件。
+  - 运行 `./.venv/bin/python -m unittest tests/test_mac_distribution.py`：12 项发行版结构与安全审计测试全部通过（OK）。
+
+### 影响与限制
+
+- 客户端标识切换为现代桌面客户端 `ct: 26`，大幅降低被频控限制概率；
+- 兼容起播 0ms 检索仅在歌名与歌手精确相符时生效，不会引入非同名曲目误匹配；
+- 维持既有网易云音乐与 Windows 版本行为一致。
+
 ## 2026-10-13：macOS QQ 音乐 CoreAudio 硬件级暂停识别与精选集/合唱歌词匹配优化
 
 ### 改动
