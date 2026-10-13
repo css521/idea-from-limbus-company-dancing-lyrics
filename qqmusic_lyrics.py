@@ -6,6 +6,7 @@ import html
 import json
 import math
 import re
+import sys
 import unicodedata
 import urllib.parse
 import urllib.request
@@ -15,6 +16,9 @@ from qqmusic_http import discard_connection, lyric_connection, open_request
 
 MAX_BYTES = 2 * 1024 * 1024
 SEARCH_MODULE = "music.search.SearchCgiService"
+USER_AGENT = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+              if sys.platform == "darwin" else
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
 
 @dataclass(frozen=True)
@@ -38,7 +42,7 @@ def artist_names(value):
 
 def request_json(url, body=None):
     request = urllib.request.Request(url, data=json.dumps(body).encode("utf-8") if body else None,
-                                    headers={"User-Agent": "Mozilla/5.0", "Referer": "https://y.qq.com/",
+                                    headers={"User-Agent": USER_AGENT, "Referer": "https://y.qq.com/",
                                              "Content-Type": "application/json"})
     with open_request(request, timeout=5) as response:
         raw = response.read(MAX_BYTES + 1)
@@ -140,6 +144,7 @@ def _search_song(snapshot, cancelled):
         _checkpoint(cancelled)
         try:
             data = request_json("https://u.y.qq.com/cgi-bin/musicu.fcg", {
+                "comm": {"ct": 11, "cv": 0},
                 SEARCH_MODULE: {"module": SEARCH_MODULE, "method": "DoSearchForQQMusicDesktop",
                                 "param": {"search_type": 0, "query": query, "page_num": 1, "num_per_page": 20}}})
             response = data.get(SEARCH_MODULE, {})

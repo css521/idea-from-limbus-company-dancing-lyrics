@@ -140,7 +140,7 @@ def query_nowplaying(cli, allowed_bundles=None):
 
 def load_qqmusic_lyrics(info, cache_reader=None, cancelled=lambda: False):
     from qqmusic import QQSnapshot
-    from qqmusic_lyrics import load_song_lyrics as qq_load_lyrics
+    from qqmusic_lyrics import load_song_lyrics as qq_load_lyrics, LyricResult
     snapshot = QQSnapshot(
         title=info.title,
         artist=info.artist,
@@ -157,7 +157,104 @@ def load_qqmusic_lyrics(info, cache_reader=None, cancelled=lambda: False):
                 return cache_result
         except Exception as error:
             logger.debug("QQ Music cache lookup skipped: %s", error)
-    return qq_load_lyrics(snapshot, cancelled=cancelled)
+
+    last_error = None
+    result = None
+    try:
+        result = qq_load_lyrics(snapshot, cancelled=cancelled)
+        if result and result.document is not None:
+            return result
+    except Exception as error:
+        last_error = error
+
+    if snapshot.album:
+        try:
+            fallback = qq_load_lyrics(replace(snapshot, album=""), cancelled=cancelled)
+            if fallback and fallback.document is not None:
+                return fallback
+            if result is None:
+                result = fallback
+        except Exception as error:
+            if last_error is None:
+                last_error = error
+
+    try:
+        collab_song = _find_mac_collab_song(snapshot, cancelled=cancelled)
+        if collab_song is not None:
+            collab_doc = _fetch_qq_lyrics_by_mid(collab_song["mid"], collab_song.get("id", 0), cancelled=cancelled)
+            if collab_doc is not None:
+                return LyricResult(collab_doc, f"QQ 音乐歌词已同步 · {len(collab_doc.lines)} 句", collab_song["mid"])
+    except Exception as error:
+        if last_error is None:
+            last_error = error
+
+    if last_error is not None and (result is None or result.document is None):
+        raise last_error
+    return result if result is not None else LyricResult(None, "未找到可靠匹配的 QQ 音乐歌词，可点击“重新获取歌词”重试。")
+
+
+def _fetch_qq_lyrics_by_mid(mid, song_id=0, cancelled=lambda: False):
+    from qqmusic_lyrics import request_json, parse_lyrics
+    try:
+        data = request_json("https://u.y.qq.com/cgi-bin/musicu.fcg", {
+            "comm": {"ct": 24, "cv": 0}, "req_0": {
+                "module": "music.musichallSong.PlayLyricInfo", "method": "GetPlayLyricInfo",
+                "param": {"songMID": mid, "songID": song_id, "qrc": 0, "crypt": 0,
+                          "roma": 0, "trans": 1}}})
+        part = data.get("req_0", {})
+        if isinstance(part, dict) and part.get("code") == 0:
+            return parse_lyrics(part.get("data"))
+    except Exception:
+        pass
+    url = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?" + urllib.parse.urlencode(
+        {"songmid": mid, "format": "json", "nobase64": 1})
+    return parse_lyrics(request_json(url), encoded=False)
+
+
+def _find_mac_collab_song(snapshot, cancelled=lambda: False):
+    from qqmusic_lyrics import request_json, SEARCH_MODULE, normalized, artist_names
+    singers = [re.sub(r"\s*[（(][^()（）]*[)）]\s*$", "", name).strip()
+               for name in re.split(r"[/、,，;&]", snapshot.artist) if name.strip()]
+    artist_query = " ".join(singers)
+    queries = dict.fromkeys((f"{snapshot.title} {artist_query}".strip(), snapshot.title,
+                             f"{artist_query} {snapshot.title}".strip()))
+    candidates = []
+    for q in queries:
+        if cancelled():
+            return None
+        payload = {
+            "comm": {"ct": 11, "cv": 0},
+            SEARCH_MODULE: {"module": SEARCH_MODULE, "method": "DoSearchForQQMusicDesktop",
+                            "param": {"search_type": 0, "query": q, "page_num": 1, "num_per_page": 20}}
+        }
+        try:
+            data = request_json("https://u.y.qq.com/cgi-bin/musicu.fcg", payload)
+            sub = data.get(SEARCH_MODULE, {})
+            if sub.get("code") == 0:
+                songs = sub.get("data", {}).get("body", {}).get("song", {}).get("list", [])
+                candidates.extend(songs[:20])
+        except Exception:
+            continue
+    matches = {}
+    snap_artists = artist_names(snapshot.artist)
+    for s in candidates:
+        if not isinstance(s, dict):
+            continue
+        name = s.get("title", s.get("name", ""))
+        singers = s.get("singer", [])
+        duration, mid = s.get("interval"), s.get("mid")
+        if not isinstance(name, str) or normalized(name) != normalized(snapshot.title):
+            continue
+        if not isinstance(singers, list) or not singers:
+            continue
+        names = set().union(*(artist_names(x["name"]) for x in singers if isinstance(x, dict) and isinstance(x.get("name"), str)))
+        if not snap_artists.issubset(names):
+            continue
+        if not isinstance(duration, (int, float)) or not math.isfinite(duration) or abs(duration * 1000 - snapshot.duration_ms) > 2000:
+            continue
+        if isinstance(mid, str) and re.fullmatch(r"[A-Za-z0-9]{14}", mid):
+            matches[mid] = s
+    return next(iter(matches.values())) if len(matches) == 1 else None
 
 
 def _api(path, values, post=False):

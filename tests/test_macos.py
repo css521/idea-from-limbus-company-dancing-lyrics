@@ -335,6 +335,33 @@ class MacPlayerTests(unittest.TestCase):
         finally:
             player.stop()
 
+    def test_load_qqmusic_lyrics_collab_and_album_fallback(self):
+        from lrc import LyricDocument, LyricLine
+        from qqmusic_lyrics import LyricResult
+        doc = LyricDocument([LyricLine(1000, "测试歌词")], [])
+        sample_info = mac.NowPlaying("playing", "TestSong", "TestArtist", 180000, 1000, album="WrongAlbum", bundle="com.tencent.QQMusicMac")
+        calls = []
+
+        def mock_qq_load(snapshot, cancelled=lambda: False):
+            calls.append(snapshot.album)
+            if snapshot.album == "WrongAlbum":
+                return LyricResult(None, "未找到")
+            return LyricResult(doc, "成功", "mid123")
+
+        with patch("qqmusic_lyrics.load_song_lyrics", side_effect=mock_qq_load):
+            res = mac.load_qqmusic_lyrics(sample_info)
+            self.assertEqual(res.document, doc)
+            self.assertEqual(calls, ["WrongAlbum", ""])
+
+        collab_info = mac.NowPlaying("playing", "CollabSong", "ArtistA", 180000, 1000, bundle="com.tencent.QQMusicMac")
+        with patch("qqmusic_lyrics.load_song_lyrics", return_value=LyricResult(None, "未找到")), \
+             patch("macos_netease._find_mac_collab_song", return_value={"mid": "collab_mid", "id": 123}), \
+             patch("macos_netease._fetch_qq_lyrics_by_mid", return_value=doc):
+            res2 = mac.load_qqmusic_lyrics(collab_info)
+            self.assertEqual(res2.document, doc)
+            self.assertEqual(res2.mid, "collab_mid")
+
+
 
 class MacPlatformTests(unittest.TestCase):
     def test_platform_defaults_and_theme_font_keep_windows_unchanged(self):

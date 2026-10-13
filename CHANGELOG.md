@@ -2,6 +2,35 @@
 
 每次改动按日期追加记录，包含改动目的、涉及文件、测试与验证结果、影响或已知限制。
 
+## 2026-10-13：macOS QQ 音乐接口 2001 修复与歌词自适应回退
+
+### 改动
+
+- 解决用户实机测试 `都市回响.app` 时出现的“QQ 音乐歌词获取暂时失败，10 秒后自动重试”问题：
+  1. 在 `qqmusic_lyrics.py` 中为 `DoSearchForQQMusicDesktop` 请求加入客户端身份块 `"comm": {"ct": 11, "cv": 0}`，并统一配置标准桌面端浏览器 User-Agent，修复因缺少身份参数和默认 Python UA 导致的 `code: 2001`（参数错误/限制）报错。
+  2. 在 `macos_netease.py` 的 `load_qqmusic_lyrics` 中增加专辑名自适应回退：当 macOS 系统 `nowplaying-cli` 传回的单曲专辑名与 QQ 音乐云端正式唱片专辑不一致时，自动清空专辑限制重试匹配。
+  3. 增加合唱歌曲主歌手包含匹配与回退机制（`_find_mac_collab_song` 与 `_fetch_qq_lyrics_by_mid`）：针对 macOS 系统媒体控制仅汇报主歌手而云端为多歌手合唱的情形，在歌名与时长严格吻合的前提下判定子集匹配，并直接按歌曲 `mid` 获取完整歌词。
+- 重新使用 `tools/build_macos.py` 编译打包生成最新 `build/macos-dist/都市回响.app` 及 `artifacts/mac-release/city-echoes-0.6.0-beta.2-macos.1-arm64.zip`。
+
+### 测试与验证
+
+- 自动化单元测试：
+  - 在 `tests/test_macos.py` 中新增 `test_load_qqmusic_lyrics_collab_and_album_fallback`，覆盖单曲专辑名不一致回退及合唱多歌手主唱子集匹配逻辑。
+  - 运行 `./.venv/bin/python -m unittest tests/test_macos.py`：32 项测试全部通过。
+  - 运行核心与文档校验：`test_core.py` (21 项)、`test_workflow_docs.py` (18 项通过，1 项 Windows 跳过)、`test_qqmusic.py` (27 项)、`test_qqmusic_cache.py` (32 项)、`test_mac_distribution.py` (12 项) 全部通过。
+- 真实歌曲云端网络检索与匹配验证：
+  - 测试 Alexandra Stan《All My People》（单曲/专辑差异）：成功解析同步 70 句歌词。
+  - 测试 h3R3刘清云《先说谎的人》（多歌手合唱）：成功解析同步 81 句歌词。
+  - 测试 Odesza《A Moment Apart》：成功解析同步 21 句歌词。
+- 打包产物校验：
+  - 生成 `build/macos-dist/都市回响.app`，`codesign --verify` 校验签名有效。
+  - 发布归档 `artifacts/mac-release/city-echoes-0.6.0-beta.2-macos.1-arm64.zip` 生成成功，大小 55,112,643 字节。
+
+### 影响与限制
+
+- 仅优化网络搜索参数与 macOS 平台上的歌手/专辑回退容错机制，未修改原有歌词逐字渲染、动画逻辑和 Windows 平台功能。
+- 打包为本地自签名应用，首次打开可能需右键选择“打开”或在系统“安全性与隐私”中允许运行。
+
 ## 2026-10-13：macOS 适配 QQ 音乐播放及 QRC 歌词格式
 
 ### 改动
