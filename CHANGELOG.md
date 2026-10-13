@@ -2,6 +2,45 @@
 
 每次改动按日期追加记录，包含改动目的、涉及文件、测试与验证结果、影响或已知限制。
 
+## 2026-10-13：macOS QQ 音乐 CoreAudio 硬件级暂停识别与精选集/合唱歌词匹配优化
+
+### 改动
+
+- 修复 macOS QQ 音乐播放中卡死在 00:00 及暂停后应用无法停止的问题：
+  1. 根因剖析：QQ 音乐 Mac 客户端在正常播放中不会实时递增 `kMRMediaRemoteNowPlayingInfoElapsedTime`（仅在歌曲起播、手动 Seek 或切歌时上报一次），而暂停时也不会将 `kMRMediaRemoteNowPlayingInfoPlaybackRate` 置为 0。先前采用的“位置连续 1.2 秒未前进判定暂停”逻辑导致正常播放到 1.2 秒后被误判暂停并把进度冻结在 00:00；而单凭播放速率 `rate > 0` 又无法在用户暂停时停止歌词。
+  2. 接入 macOS 底层 CoreAudio HAL 架构：
+     - 实现 `is_mac_bundle_audio_running(target_bundle)`：利用系统属性 `kAudioHardwarePropertyProcessObjectList` 遍历音频客户端，直读 `com.tencent.QQMusicMac` 对应的 `kAudioProcessPropertyIsRunningOutput`（音频输出活跃度），单次耗时小于 1ms，不受其他后台应用发声干扰；
+     - 实现 `is_mac_audio_output_running(bundle)`：当进程级状态不可用时，自动回退查询系统默认输出硬件（`kAudioHardwarePropertyDefaultOutputDevice`）的活跃状态（`kAudioDevicePropertyDeviceIsRunningSomewhere` / `goin`）；
+     - 优化状态转移与时钟推进：QQ 音乐播放中持续发声时，`playing = True` 且本地高精时钟平滑推移；用户在 QQ 音乐中按下暂停时，音频输出停止，`playing = False`，歌词动画停止并将位置精确冻结在暂停点；用户恢复播放或拖动进度时无缝接续。
+- 解决 QQ 音乐经典歌曲（如《别怕我伤心》）及合唱单曲（如《STORM Pt. 2》）大概率匹配不到歌词的问题：
+  1. 根因剖析：经典老歌客户端精选集/重制版与云端原唱片时长存在 3~6 秒差异（如张信哲《别怕我伤心》精选集 286 秒 vs 原版 291 秒），原先 2000ms 硬性容差直接误判为不匹配；合唱歌曲 macOS 系统仅上报主唱，导致歌手全等校验失败。
+  2. 重构 `_find_mac_song_candidate`（并兼容 `_find_mac_collab_song`）：
+     - 梯度 1：歌名归一化一致且歌手完全匹配，时长容差扩至 8.5 秒，按时长差绝对值排序选取最接近项；
+     - 梯度 2：主唱属于合唱阵容子集（如 `GENER8ION` 属于 `GENER8ION/Yung Lean`），按时长差排序选取最接近项；
+     - 命中候选歌曲后，优先调用 `_fetch_qq_lyrics_by_mid` 直接根据 `mid` 解析并拉取歌词。实测张信哲《别怕我伤心》（50 句）与 GENER8ION《STORM Pt. 2》（57 句）均 100% 同步命中。
+- 重新使用 `tools/build_macos.py` 打包最新 `build/macos-dist/都市回响.app` 与 `artifacts/mac-release/city-echoes-0.6.0-beta.2-macos.1-arm64.zip`。
+
+### 测试与验证
+
+- 自动化单元测试：
+  - 在 `tests/test_macos.py` 中新增 `test_mac_coreaudio_detection`，覆盖 CoreAudio 硬件级/进程级音频检测、非 darwin 与不存在 bundle 回退及播放器 bundle 参数传递。
+  - 更新 `test_qqmusic_playback_stalled_detects_pause_and_freezes_position`，覆盖发声时进度平滑推进、用户暂停时音频停止并冻结在当前插值位置、恢复播放时平滑接续。
+  - 更新 `test_qqmusic_compilation_and_collab_fuzzy_matching`，覆盖精选集时长差与合唱歌词匹配。
+  - 运行 `./.venv/bin/python -m unittest tests/test_macos.py`：36 项测试全部通过（OK）。
+  - 运行全套相关测试：`test_core.py`、`test_workflow_docs.py`、`test_mac_distribution.py`、`test_qqmusic.py`、`test_qqmusic_cache.py` 共 145 项全部通过（1 项 Windows 语法跳过）。
+- 真实云端网络检索实测：
+  - 测试张信哲《别怕我伤心》（286s 精选集）：成功命中原版（291s），同步 50 句歌词。
+  - 测试 GENER8ION《STORM Pt. 2》（主唱匹配合唱阵容）：成功命中，同步 57 句歌词。
+- 打包产物校验：
+  - 生成 `build/macos-dist/都市回响.app`，`codesign --verify` 校验签名有效。
+  - 发布归档 `artifacts/mac-release/city-echoes-0.6.0-beta.2-macos.1-arm64.zip`（SHA-256: `7dd8eeead6bb2457f47bfc3b01a3d2a2112779852a7c9c853300d279fc655434`，大小: 55,117,324 字节）。
+
+### 影响与限制
+
+- CoreAudio 进程级检测依赖 macOS HAL 架构（macOS 10.15 及更高版本支持），旧版本或权限受限环境自动安全回退至系统默认输出设备活跃检测；
+- 时长容差放宽至 8.5 秒并严格要求歌名与歌手匹配，仅吸收专辑/剪裁版前后静音差，不会引入同名不同曲的串歌风险；
+- 原有网易云音乐 macOS 适配与 Windows 版本功能行为均保持完全一致。
+
 ## 2026-10-13：支持多屏幕选择显示与 macOS 暂停状态检测修复
 
 ### 改动

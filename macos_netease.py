@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import unicodedata
@@ -138,6 +139,77 @@ def query_nowplaying(cli, allowed_bundles=None):
     return parse_nowplaying(json.loads(result.stdout), allowed_bundles=allowed_bundles)
 
 
+def is_mac_bundle_audio_running(target_bundle):
+    if sys.platform != "darwin" or not target_bundle:
+        return None
+    try:
+        import ctypes
+        coreaudio = ctypes.CDLL("/System/Library/Frameworks/CoreAudio.framework/CoreAudio")
+        cf = ctypes.CDLL("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+        cf.CFStringGetCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_long, ctypes.c_uint32]
+        cf.CFStringGetCString.restype = ctypes.c_bool
+        cf.CFRelease.argtypes = [ctypes.c_void_p]
+
+        class AudioObjectPropertyAddress(ctypes.Structure):
+            _fields_ = [("mSelector", ctypes.c_uint32), ("mScope", ctypes.c_uint32), ("mElement", ctypes.c_uint32)]
+
+        addr = AudioObjectPropertyAddress(0x70727323, 0x676c6f62, 0)
+        size = ctypes.c_uint32(0)
+        if coreaudio.AudioObjectGetPropertyDataSize(1, ctypes.byref(addr), 0, None, ctypes.byref(size)) != 0:
+            return None
+        count = size.value // 4
+        procs = (ctypes.c_uint32 * count)()
+        if coreaudio.AudioObjectGetPropertyData(1, ctypes.byref(addr), 0, None, ctypes.byref(size), ctypes.byref(procs)) != 0:
+            return None
+        addr_bid = AudioObjectPropertyAddress(0x70626964, 0x676c6f62, 0)
+        addr_run = AudioObjectPropertyAddress(0x7069726f, 0x676c6f62, 0)
+        buf = ctypes.create_string_buffer(256)
+        for pid_obj in procs:
+            cfstr = ctypes.c_void_p(0)
+            s = ctypes.c_uint32(ctypes.sizeof(cfstr))
+            if coreaudio.AudioObjectGetPropertyData(pid_obj, ctypes.byref(addr_bid), 0, None, ctypes.byref(s), ctypes.byref(cfstr)) == 0 and cfstr.value:
+                ok = cf.CFStringGetCString(cfstr.value, buf, 256, 0x08000100)
+                cf.CFRelease(cfstr.value)
+                if ok and buf.value.decode("utf-8") == target_bundle:
+                    running = ctypes.c_uint32(0)
+                    s_run = ctypes.c_uint32(ctypes.sizeof(running))
+                    if coreaudio.AudioObjectGetPropertyData(pid_obj, ctypes.byref(addr_run), 0, None, ctypes.byref(s_run), ctypes.byref(running)) == 0:
+                        return bool(running.value)
+    except Exception:
+        pass
+    return None
+
+
+def is_mac_audio_output_running(bundle=None):
+    if sys.platform != "darwin":
+        return True
+    if bundle:
+        proc_running = is_mac_bundle_audio_running(bundle)
+        if proc_running is not None:
+            return proc_running
+    try:
+        import ctypes
+        coreaudio = ctypes.CDLL("/System/Library/Frameworks/CoreAudio.framework/CoreAudio")
+        class AudioObjectPropertyAddress(ctypes.Structure):
+            _fields_ = [("mSelector", ctypes.c_uint32), ("mScope", ctypes.c_uint32), ("mElement", ctypes.c_uint32)]
+
+        # kAudioHardwarePropertyDefaultOutputDevice = 'dOut' (0x644f7574), kAudioObjectPropertyScopeGlobal = 'glob' (0x676c6f62)
+        prop = AudioObjectPropertyAddress(0x644f7574, 0x676c6f62, 0)
+        dev_id = ctypes.c_uint32(0)
+        size = ctypes.c_uint32(ctypes.sizeof(dev_id))
+        if coreaudio.AudioObjectGetPropertyData(1, ctypes.byref(prop), 0, None, ctypes.byref(size), ctypes.byref(dev_id)) != 0:
+            return True
+        is_running = ctypes.c_uint32(0)
+        size = ctypes.c_uint32(ctypes.sizeof(is_running))
+        for selector in (0x676f6e65, 0x676f696e):
+            prop_running = AudioObjectPropertyAddress(selector, 0x676c6f62, 0)
+            if coreaudio.AudioObjectGetPropertyData(dev_id.value, ctypes.byref(prop_running), 0, None, ctypes.byref(size), ctypes.byref(is_running)) == 0:
+                return bool(is_running.value)
+    except Exception:
+        pass
+    return True
+
+
 def load_qqmusic_lyrics(info, cache_reader=None, cancelled=lambda: False):
     from qqmusic import QQSnapshot
     from qqmusic_lyrics import load_song_lyrics as qq_load_lyrics, LyricResult
@@ -211,7 +283,7 @@ def _fetch_qq_lyrics_by_mid(mid, song_id=0, cancelled=lambda: False):
     return parse_lyrics(request_json(url), encoded=False)
 
 
-def _find_mac_collab_song(snapshot, cancelled=lambda: False):
+def _find_mac_song_candidate(snapshot, cancelled=lambda: False):
     from qqmusic_lyrics import request_json, SEARCH_MODULE, normalized, artist_names
     singers = [re.sub(r"\s*[（(][^()（）]*[)）]\s*$", "", name).strip()
                for name in re.split(r"[/、,，;&]", snapshot.artist) if name.strip()]
@@ -235,26 +307,44 @@ def _find_mac_collab_song(snapshot, cancelled=lambda: False):
                 candidates.extend(songs[:20])
         except Exception:
             continue
-    matches = {}
     snap_artists = artist_names(snapshot.artist)
+    clean_target = normalized(snapshot.title)
+    exact_artist_matches = []
+    collab_matches = []
+    seen_mids = set()
     for s in candidates:
         if not isinstance(s, dict):
             continue
+        mid = s.get("mid")
+        if not isinstance(mid, str) or not re.fullmatch(r"[A-Za-z0-9]{14}", mid) or mid in seen_mids:
+            continue
         name = s.get("title", s.get("name", ""))
         singers = s.get("singer", [])
-        duration, mid = s.get("interval"), s.get("mid")
-        if not isinstance(name, str) or normalized(name) != normalized(snapshot.title):
+        duration = s.get("interval")
+        if not isinstance(name, str) or normalized(name) != clean_target:
             continue
         if not isinstance(singers, list) or not singers:
             continue
         names = set().union(*(artist_names(x["name"]) for x in singers if isinstance(x, dict) and isinstance(x.get("name"), str)))
-        if not snap_artists.issubset(names):
+        if not isinstance(duration, (int, float)) or not math.isfinite(duration):
             continue
-        if not isinstance(duration, (int, float)) or not math.isfinite(duration) or abs(duration * 1000 - snapshot.duration_ms) > 2000:
+        diff_ms = abs(duration * 1000 - snapshot.duration_ms)
+        if diff_ms > 8500:
             continue
-        if isinstance(mid, str) and re.fullmatch(r"[A-Za-z0-9]{14}", mid):
-            matches[mid] = s
-    return next(iter(matches.values())) if len(matches) == 1 else None
+        seen_mids.add(mid)
+        if names == snap_artists:
+            exact_artist_matches.append((diff_ms, s))
+        elif snap_artists.issubset(names):
+            collab_matches.append((diff_ms, s))
+    if exact_artist_matches:
+        exact_artist_matches.sort(key=lambda item: item[0])
+        return exact_artist_matches[0][1]
+    if collab_matches:
+        collab_matches.sort(key=lambda item: item[0])
+        return collab_matches[0][1]
+    return None
+
+_find_mac_collab_song = _find_mac_song_candidate
 
 
 def _api(path, values, post=False):
@@ -375,7 +465,8 @@ class MacNeteasePlayer(QObject):
     analysis_error = "macOS 暂未接入真实音频强弱，请选择轻波浪。"
 
     def __init__(self, parent=None, *, query=None, loader=load_song_lyrics, clock=time.monotonic,
-                 executor=None, autostart=True, source_mode="auto", cache_directory="", cache_reader=None):
+                 executor=None, autostart=True, source_mode="auto", cache_directory="", cache_reader=None,
+                 audio_running=None):
         super().__init__(parent)
         self.cli = find_nowplaying_cli() if query is None else None
         self.source_mode = source_mode
@@ -391,6 +482,7 @@ class MacNeteasePlayer(QObject):
         self._custom_loader = loader is not load_song_lyrics
         self._executor = executor or ThreadPoolExecutor(max_workers=2, thread_name_prefix="mac-lyrics")
         self._owns_executor = executor is None
+        self._audio_running = audio_running or is_mac_audio_output_running
         self.playing = self.ended = self.connected = self.lyrics_received = False
         self.enabled = True
         self.song_id = self.title = self.artist = ""
@@ -574,24 +666,21 @@ class MacNeteasePlayer(QObject):
         key = json.dumps([info.title, info.artist, info.duration_ms], ensure_ascii=False)
         switched = key != self.song_id
         raw_playing = (info.state == "playing" and info.rate > 0)
-        if switched:
-            self._last_pos_advanced_at = now
-            playing = raw_playing
-            self._anchor, self._at = info.position_ms, now
+        audio_func = getattr(self, "_audio_running", is_mac_audio_output_running)
+        try:
+            audio_running = audio_func(getattr(info, "bundle", None))
+        except TypeError:
+            audio_running = audio_func()
+        if raw_playing and self.is_qqmusic:
+            playing = bool(audio_running)
         else:
-            if info.position_ms != self._last_raw:
-                self._last_pos_advanced_at = now
-                playing = raw_playing
-                self._anchor, self._at = info.position_ms, now
-            else:
-                if raw_playing and (now - getattr(self, "_last_pos_advanced_at", now) > 1.2):
-                    playing = False
-                    self._anchor = info.position_ms
-                    self._at = now
-                else:
-                    playing = raw_playing if (now - getattr(self, "_last_pos_advanced_at", now) <= 1.2) else False
+            playing = raw_playing
 
         jumped = switched or (self._last_raw is not None and self._last_raw != info.position_ms and abs(info.position_ms - self.position()) > 750)
+        if switched or (self._last_raw is not None and self._last_raw != info.position_ms):
+            self._anchor, self._at = info.position_ms, now
+        elif playing != self.playing:
+            self._anchor, self._at = self.position(), now
         self._last_poll, self._last_raw = now, info.position_ms
         self._rate = info.rate
         self.connected, self.playing = True, playing
@@ -625,7 +714,7 @@ class MacNeteasePlayer(QObject):
     def position(self):
         if not self.playing:
             return max(0, min(self._anchor, self.duration)) if self.duration else max(0, self._anchor)
-        elapsed = max(0, min(self._clock(), self._at + 1.2) - self._at) * 1000
+        elapsed = max(0, self._clock() - self._at) * 1000
         value = self._anchor + elapsed * self._rate
         return max(0, min(value, self.duration)) if self.duration else max(0, value)
 

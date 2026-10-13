@@ -363,40 +363,83 @@ class MacPlayerTests(unittest.TestCase):
 
     def test_qqmusic_playback_stalled_detects_pause_and_freezes_position(self):
         clock_time = [100.0]
+        audio_state = [True]
         def fake_clock():
             return clock_time[0]
+        def fake_audio_running():
+            return audio_state[0]
 
-        player = mac.MacNeteasePlayer(autostart=False, clock=fake_clock, query=lambda: None)
+        player = mac.MacNeteasePlayer(autostart=False, clock=fake_clock, query=lambda: None, audio_running=fake_audio_running)
         try:
             sample = mac.NowPlaying("playing", "Song", "Artist", 200000, 150000, rate=1.0, bundle="com.tencent.QQMusicMac")
             player.apply(sample, captured=100.0)
             self.assertTrue(player.playing)
             self.assertEqual(player.position(), 150000)
 
-            # 正常推进 0.5s，因插值时间向前移动 500ms
-            clock_time[0] = 100.5
-            self.assertEqual(player.position(), 150500)
+            # 正常推进 1.5s，因音频设备活跃且播放中，时间向前平滑推进到 151500
+            clock_time[0] = 101.5
+            self.assertEqual(player.position(), 151500)
 
-            # 模拟 QQ 音乐按了暂停：nowplaying-cli 返回的 position_ms 依然是 150000，且 rate 依然是 1.0
-            # 持续 1.5 秒后（超过 1.2s 阈值）
-            clock_time[0] = 101.6
-            player.apply(sample, captured=101.6)
-            # 必须判定为暂停！
+            # 用户按下暂停，音频设备停止发声（虽然 QQ 音乐的 rate 仍为 1.0，position_ms 没变）
+            audio_state[0] = False
+            clock_time[0] = 102.0
+            player.apply(sample, captured=102.0)
+            # 必须识别为暂停！
             self.assertFalse(player.playing)
-            # 并且位置冻结在原处 150000，绝不继续累加
-            self.assertEqual(player.position(), 150000)
+            # 并且位置冻结在暂停时的实际位置 152000，绝不倒退回 150000 也绝不继续累加
+            self.assertEqual(player.position(), 152000)
 
             # 时间继续过去，位置依然静止
             clock_time[0] = 105.0
-            self.assertEqual(player.position(), 150000)
+            self.assertEqual(player.position(), 152000)
 
-            # 当用户恢复播放，position_ms 递增到 152000
+            # 当用户恢复播放，音频设备恢复活跃发声
+            audio_state[0] = True
             resumed = mac.NowPlaying("playing", "Song", "Artist", 200000, 152000, rate=1.0, bundle="com.tencent.QQMusicMac")
             player.apply(resumed, captured=105.1)
             self.assertTrue(player.playing)
             self.assertEqual(player.position(), 152000)
         finally:
             player.stop()
+
+    def test_mac_coreaudio_detection(self):
+        # 验证 CoreAudio 检测在各种边界条件下返回有效布尔或 None，且不抛出异常
+        self.assertIsNone(mac.is_mac_bundle_audio_running(None))
+        self.assertIsNone(mac.is_mac_bundle_audio_running(""))
+        fake_result = mac.is_mac_bundle_audio_running("com.fake.nonexistent.app.12345")
+        self.assertIn(fake_result, (None, False))
+        out_running = mac.is_mac_audio_output_running()
+        self.assertIsInstance(out_running, bool)
+        out_bundle_running = mac.is_mac_audio_output_running("com.fake.nonexistent.app.12345")
+        self.assertIsInstance(out_bundle_running, bool)
+
+        # 验证播放器调用音频检测时会传入 bundle
+        received_bundles = []
+        def probe_audio(bundle=None):
+            received_bundles.append(bundle)
+            return True
+
+        p = mac.MacNeteasePlayer(autostart=False, query=lambda: None, audio_running=probe_audio)
+        try:
+            info = mac.NowPlaying("playing", "Song", "Artist", 200000, 10000, rate=1.0, bundle="com.tencent.QQMusicMac")
+            p.apply(info)
+            self.assertIn("com.tencent.QQMusicMac", received_bundles)
+        finally:
+            p.stop()
+
+    def test_qqmusic_compilation_and_collab_fuzzy_matching(self):
+        from lrc import LyricDocument, LyricLine
+        from qqmusic_lyrics import LyricResult
+        doc = LyricDocument([LyricLine(1000, "测试歌词")], [])
+        # 测试张信哲《别怕我伤心》（时长 286000ms，原版 291000ms，差异 5000ms 且专辑为精选集）
+        compilation_info = mac.NowPlaying("playing", "别怕我伤心", "张信哲", 286000, 0, album="永恒金曲 影音典藏精选", bundle="com.tencent.QQMusicMac")
+        mock_song = {"mid": "000z6RLz2OWlRY", "id": 100, "name": "别怕我伤心", "singer": [{"name": "张信哲"}], "interval": 291, "album": {"name": "等待"}}
+        with patch("qqmusic_lyrics.load_song_lyrics", return_value=LyricResult(None, "未找到")), \
+             patch("macos_netease._find_mac_collab_song", return_value=mock_song), \
+             patch("macos_netease._fetch_qq_lyrics_by_mid", return_value=doc):
+            res = mac.load_qqmusic_lyrics(compilation_info)
+            self.assertEqual(res.document, doc)
+            self.assertEqual(res.mid, "000z6RLz2OWlRY")
 
     def test_screen_selection_and_overlay_binding(self):
         from overlay import LyricsOverlay
