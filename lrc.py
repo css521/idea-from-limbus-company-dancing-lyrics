@@ -81,7 +81,28 @@ def parse_lrc(text: str) -> LyricDocument:
 
 
 def load_lrc(path: str | Path) -> LyricDocument:
-    raw = Path(path).read_bytes()
+    file_path = Path(path)
+    raw = file_path.read_bytes()
+    if (file_path.suffix.lower() == ".qrc" or raw.startswith(b"<?xml")
+            or b"<LyricInfo>" in raw or b"<QrcInfos>" in raw or b"[offset:" in raw[:64]):
+        try:
+            from qqmusic_qrc import decode_qrc, parse_qrc
+            try:
+                text = decode_qrc(raw)
+            except Exception:
+                text = None
+                for encoding in ("utf-8-sig", "gb18030"):
+                    try:
+                        text = raw.decode(encoding)
+                        break
+                    except UnicodeDecodeError:
+                        continue
+            if text:
+                doc = parse_qrc(text)
+                if doc is not None:
+                    return doc
+        except Exception as error:
+            raise ValueError(f"QRC 歌词解析失败：{error}") from error
     for encoding in ("utf-8-sig", "gb18030"):
         try:
             return parse_lrc(raw.decode(encoding))

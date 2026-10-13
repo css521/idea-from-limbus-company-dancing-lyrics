@@ -86,7 +86,13 @@ def discover_cache_directories():
         return active
     candidates = [Path(os.environ.get(key,''))/'Tencent/QQMusic/QQMusicLyricNew'
                   for key in ('APPDATA','LOCALAPPDATA') if os.environ.get(key)]
-    # Bounded direct path checks, not a recursive or whole-drive scan.
     if sys.platform=='win32':
         candidates += [Path(f'{drive}:/QQMusicCache/QQMusicLyricNew') for drive in 'CDE']
+    elif sys.platform == 'darwin':
+        candidates += [
+            Path.home() / 'Library/Application Support/com.tencent.QQMusicMac/QQMusicLyricNew',
+            Path.home() / 'Library/Application Support/com.tencent.QQMusicMac',
+            Path.home() / 'Library/Containers/com.tencent.QQMusicMac/Data/Library/Application Support/com.tencent.QQMusicMac/QQMusicLyricNew',
+            Path.home() / 'Library/Containers/com.tencent.QQMusicMac/Data/Documents/QQMusicLyricNew',
+        ]
     return [path for path in candidates if path.is_dir()]

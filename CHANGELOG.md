@@ -2,6 +2,30 @@
 
 每次改动按日期追加记录，包含改动目的、涉及文件、测试与验证结果、影响或已知限制。
 
+## 2026-10-13：macOS 适配 QQ 音乐播放及 QRC 歌词格式
+
+### 改动
+
+- 针对 macOS 环境下播放 QQ 音乐时面板与格式仍显示为“网易云”且无法获取歌词的问题，扩展 `macos_netease.py`：新增对 QQ 音乐 Mac 客户端（`com.tencent.QQMusicMac`）的客户端 Bundle 标识识别（兼容 `kMRMediaRemoteNowPlayingInfoClientBundleIdentifier` 与 `bundleIdentifier`），并提取 `album` 专辑信息以支撑歌词精准匹配。
+- 引入 `MacMusicPlayer`（兼容保留 `MacNeteasePlayer` 别名），实现播放来源自动检测与动态切换。来源名称、短标签（`QQ 音乐` / `网易云`）、播放器状态提示、面板格式列、播放栏文案（`QQ 音乐播放`）及进度条提示均根据当前实际播放源动态响应。
+- 为 macOS 联动接入 QQ 音乐歌词接口（`qqmusic_lyrics.load_song_lyrics`）与本地缓存优先机制（`QQCacheReader`），支持“重新获取歌词”与选择歌词缓存目录。在 `qqmusic_cache_paths.py` 中为 macOS 平台添加 QQ 音乐 Mac 客户端常见歌词缓存路径。
+- 在 `lrc.py` 中扩展 `load_lrc`：新增对 `.qrc` 文件扩展名、XML 节点格式以及 DES 加密 QRC 二进制数据的解码与解析支持，完整保留字词级时间戳（`TimedWord`）并复用逐字演唱强调。
+- 在 `controls.py` 中为本地歌词选择对话框加入 `*.qrc` 支持，并在打开本地音乐时自动检测同名 `.qrc` 文件。
+- 在 `main_mac.py` 中增加 `--qqmusic` 与 `--netease` 互斥参数，支持指定单一客户端模式；保存的 QQ 音乐缓存目录设置自动载入播放器；新增 `启动QQ音乐联动.command` 便捷脚本并更新 `MACOS.md` 说明文档。
+
+### 测试与验证
+
+- `tests/test_macos.py`：新增 6 项测试覆盖 QQ 音乐 Bundle 识别与专辑提取、来源自动判定与动态切换、手动重试与缓存目录配置、QRC 文件解码（包含明文与合成密文）、`main_mac.py` 命令行参数、QQ 音乐控制面板 UI 动态呈现；全量 31 项测试全部通过。
+- `tests/test_workflow_docs.py`：18 项文档与链接校验全部通过（1 项 Windows 语法跳过），确保文档链接与变更规范完整。
+- `tests/test_core.py`、`tests/test_mac_distribution.py`、`tests/test_qqmusic.py`、`tests/test_qqmusic_cache.py`：全量共 141 项相关测试全部通过。
+- 语法与脚本校验：对 `start.sh`、`安装.sh`、`卸载.sh`、`启动.command` 及新增的 `启动QQ音乐联动.command` 执行 `bash -n` 校验，语法全部合规。
+
+### 影响与限制
+
+- macOS 下 QQ 音乐与网易云支持自动识别与无缝切换，原有网易云联动逻辑、Windows 平台实现与本地音频播放功能保持完全兼容。
+- macOS 下媒体信息读取仍依赖 `nowplaying-cli` 外部工具输出的原始 JSON，要求系统授权或已正确安装该工具。
+- QQ 音乐 Mac 客户端可能随更新调整缓存文件存放路径；当本地缓存未命中时会自动回退至官方接口网络搜索取词，也可通过控制面板手动配置歌词缓存目录或点击重新获取。
+
 ## 2026-10-11：安装等待反馈与安全取消（0.7.0-beta.7）
 
 ### 改动

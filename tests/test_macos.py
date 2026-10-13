@@ -121,6 +121,18 @@ class MacParsingTests(unittest.TestCase):
         self.assertEqual(doc.lines[0].text, "Hello")
         self.assertEqual(doc.lines[0].words, (TimedWord(1000, 1500, 0, 5),))
 
+    def test_parse_nowplaying_qqmusic_bundle_and_album(self):
+        qq_data = self.snapshot(
+            kMRMediaRemoteNowPlayingInfoClientBundleIdentifier="com.tencent.QQMusicMac",
+            kMRMediaRemoteNowPlayingInfoAlbum="测试专辑"
+        )
+        parsed = mac.parse_nowplaying(qq_data)
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed.bundle, "com.tencent.QQMusicMac")
+        self.assertEqual(parsed.album, "测试专辑")
+        self.assertIsNone(mac.parse_nowplaying(qq_data, allowed_bundles=mac.NETEASE_BUNDLES))
+        self.assertIsNotNone(mac.parse_nowplaying(qq_data, allowed_bundles=mac.QQMUSIC_BUNDLES))
+
 
 class MacOffsetTests(unittest.TestCase):
     def test_zero_offsets_unicode_paths_and_reload(self):
@@ -288,6 +300,41 @@ class MacPlayerTests(unittest.TestCase):
             released.set()
             player.stop()
 
+    def test_qqmusic_mode_and_auto_detection(self):
+        qq_info = mac.NowPlaying("playing", "QQSong", "QQArtist", 180000, 2000,
+                                 album="QQAlbum", bundle="com.tencent.QQMusicMac")
+        self.player.apply(qq_info)
+        self.assertTrue(self.player.is_qqmusic)
+        self.assertEqual(self.player.source_name, "QQ 音乐")
+        self.assertEqual(self.player.source_short, "QQ 音乐")
+        self.assertIn("QQ 音乐", self.player.connect_hint)
+        self.assertIn("QQ 音乐", self.player.status)
+
+        # Switch back to NetEase
+        netease_info = mac.NowPlaying("playing", "163Song", "163Artist", 180000, 2000,
+                                      bundle="com.netease.163music")
+        self.player.apply(netease_info)
+        self.assertFalse(self.player.is_qqmusic)
+        self.assertEqual(self.player.source_short, "网易云")
+
+    def test_qqmusic_retry_and_cache_directory_configuration(self):
+        player = mac.MacNeteasePlayer(source_mode="qqmusic", query=lambda: None,
+                                      executor=self.executor, clock=lambda: self.clock[0], autostart=False)
+        try:
+            self.assertTrue(player.is_qqmusic)
+            self.assertEqual(player.source_short, "QQ 音乐")
+            self.assertIn("QQ 音乐", player.status)
+            info = mac.NowPlaying("playing", "Song", "Artist", 120000, 1000, bundle="com.tencent.QQMusicMac")
+            player.apply(info)
+            self.assertTrue(hasattr(player, "retry_lyrics"))
+            self.assertTrue(hasattr(player, "configure_cache_directory"))
+            player.retry_lyrics()
+            self.assertIn("正在重新获取", player.lyric_status)
+            player.configure_cache_directory("/tmp/test_cache")
+            self.assertIn("test_cache", player.cache_status)
+        finally:
+            player.stop()
+
 
 class MacPlatformTests(unittest.TestCase):
     def test_platform_defaults_and_theme_font_keep_windows_unchanged(self):
@@ -407,13 +454,69 @@ class MacPlatformTests(unittest.TestCase):
         from tests.test_workflow_docs import DOCUMENTS
         self.assertIn(ROOT / "MACOS.md", DOCUMENTS)
 
+    def test_qrc_file_loading_support(self):
+        import lrc
+        with tempfile.TemporaryDirectory() as temporary:
+            # Plaintext QRC
+            qrc_path = Path(temporary) / "test.qrc"
+            qrc_path.write_text("[offset:0]\n[0,1000]你(0,400)好(400,500)\n", encoding="utf-8")
+            doc = lrc.load_lrc(qrc_path)
+            self.assertEqual(len(doc.lines), 1)
+            self.assertEqual(doc.lines[0].text, "你好")
+            self.assertEqual(len(doc.lines[0].words), 2)
+
+            # Synthetic encrypted QRC
+            synthetic = json.loads((ROOT / "tests/fixtures/qq-cache-synthetic.json").read_text(encoding="utf-8"))
+            enc_path = Path(temporary) / "encrypted.qrc"
+            enc_path.write_bytes(bytes.fromhex(synthetic["samples"]["qrc"]["hex"]))
+            enc_doc = lrc.load_lrc(enc_path)
+            self.assertGreater(len(enc_doc.lines), 0)
+            self.assertIn("你好", enc_doc.lines[0].text)
+
+    def test_main_mac_cli_options(self):
+        import main_mac
+        with patch("sys.platform", "darwin"):
+            self.assertEqual(main_mac.main(["--check"]), 0 if mac.find_nowplaying_cli() else 1)
+
+    def test_qqmusic_control_panel_ui(self):
+        from controls import ControlPanel
+        from overlay import LyricsOverlay
+        from settings import Preferences, SettingsStore
+        player = mac.MacNeteasePlayer(source_mode="qqmusic", query=lambda: None, autostart=False)
+        with tempfile.TemporaryDirectory() as temporary:
+            store = SettingsStore(Path(temporary) / "settings.ini")
+            prefs = Preferences()
+            overlay = LyricsOverlay(player, prefs)
+            panel = ControlPanel(player, overlay, prefs, store)
+            panel.show()
+            try:
+                self.assertEqual(panel.source_short, "QQ 音乐")
+                self.assertEqual(panel.source_name, "QQ 音乐")
+                info = mac.NowPlaying("playing", "测试歌曲", "测试歌手", 180000, 5000, bundle="com.tencent.QQMusicMac")
+                player.apply(info)
+                self.assertEqual(panel.format_label.text(), "QQ 音乐")
+                self.assertEqual(panel.external_transport.text(), "QQ 音乐播放")
+                self.assertIn("QQ 音乐", panel.music_hint.text())
+                self.assertFalse(panel.retry_lyrics_button.isHidden())
+                self.assertFalse(panel.qq_cache_controls.isHidden())
+            finally:
+                panel.refresh_timer.stop()
+                panel.font_preview.timer.stop()
+                panel.font_library.close()
+                panel.hide()
+                panel.tray.hide()
+                panel.deleteLater()
+                overlay.close()
+                overlay.deleteLater()
+                player.stop()
+
     def test_shell_syntax_and_non_mac_guard(self):
         git = shutil.which("git")
         git_bash = Path(git).resolve().parents[1] / "bin/bash.exe" if git else None
         bash = str(git_bash) if git_bash and git_bash.is_file() else ("/bin/bash" if Path("/bin/bash").is_file() else None)
         if not bash:
             self.skipTest("本机没有可用 Bash；macOS CI 验证脚本语法")
-        for name in ("start.sh", "安装.sh", "卸载.sh", "启动.command"):
+        for name in ("start.sh", "安装.sh", "卸载.sh", "启动.command", "启动QQ音乐联动.command"):
             result = subprocess.run([bash, "-n", str(ROOT / name)], capture_output=True, text=True, encoding="utf-8")
             self.assertEqual(result.returncode, 0, result.stderr)
         if os.name == "nt":

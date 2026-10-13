@@ -16,7 +16,10 @@ def default_state_directory():
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="都市回响 · macOS 实验版")
-    parser.add_argument("--local", action="store_true", help="本地音乐与 LRC 模式")
+    parser.add_argument("--local", action="store_true", help="本地音乐与 LRC / QRC 模式")
+    sources = parser.add_mutually_exclusive_group()
+    sources.add_argument("--netease", action="store_true", help="跟随网易云 Mac 版播放")
+    sources.add_argument("--qqmusic", action="store_true", help="跟随 QQ 音乐 Mac 版播放")
     parser.add_argument("--check", action="store_true", help="检查系统与 nowplaying-cli，不启动窗口")
     parser.add_argument("--state-dir", type=Path, help="自定义设置目录；默认项目目录中的 .state")
     parser.add_argument("--smoke", action="store_true", help="隔离的静音打包验证（模拟播放信息）")
@@ -69,8 +72,12 @@ def main(argv=None):
         from player import MusicPlayer
         player = MusicPlayer()
     else:
-        player = MacNeteasePlayer(autostart=not args.smoke)
+        source_mode = "qqmusic" if args.qqmusic else ("netease" if args.netease else "auto")
+        player = MacNeteasePlayer(autostart=not args.smoke, source_mode=source_mode)
         player.set_offset_store(OffsetStore(state_dir / "offsets.json"))
+        cache_dir = getattr(prefs, "qq_cache_directory", "")
+        if cache_dir and hasattr(player, "configure_cache_directory"):
+            player.configure_cache_directory(cache_dir)
     overlay = LyricsOverlay(player, prefs)
     library = FontLibrary(state_dir / "fonts")
     panel = ControlPanel(player, overlay, prefs, store, font_library=library)
@@ -82,7 +89,12 @@ def main(argv=None):
             shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
             shortcut.activated.connect(lambda step=delta: player.adjust_offset(step))
             shortcuts.append(shortcut)
-        panel.source_label.setText("请打开网易云 Mac 版；⌘⌥↑ / ⌘⌥↓ 微调歌词偏移。")
+        if player.source_short == "QQ 音乐":
+            panel.source_label.setText("请打开 QQ 音乐 Mac 版；⌘⌥↑ / ⌘⌥↓ 微调歌词偏移。")
+        elif getattr(player, "source_mode", "") == "netease":
+            panel.source_label.setText("请打开网易云 Mac 版；⌘⌥↑ / ⌘⌥↓ 微调歌词偏移。")
+        else:
+            panel.source_label.setText("请打开 QQ 音乐或网易云 Mac 版；⌘⌥↑ / ⌘⌥↓ 微调歌词偏移。")
         if player._offset_store.error:
             panel.show_notice(player._offset_store.error)
     app.aboutToQuit.connect(lambda: store.save(prefs))

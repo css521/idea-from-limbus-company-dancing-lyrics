@@ -70,6 +70,11 @@ class OffsetStore:
                 temporary.unlink(missing_ok=True)
 
 
+NETEASE_BUNDLES = ("com.netease.163music", "com.netease.cloudmusic")
+QQMUSIC_BUNDLES = ("com.tencent.QQMusicMac",)
+ALLOWED_BUNDLES = NETEASE_BUNDLES + QQMUSIC_BUNDLES
+
+
 @dataclass(frozen=True)
 class NowPlaying:
     state: str
@@ -79,6 +84,8 @@ class NowPlaying:
     position_ms: int
     song_id: str = ""
     rate: float = 1.0
+    album: str = ""
+    bundle: str = ""
 
 
 def find_nowplaying_cli():
@@ -96,36 +103,61 @@ def _finite(value, maximum):
     return result
 
 
-def parse_nowplaying(data):
+def parse_nowplaying(data, allowed_bundles=None):
     if not isinstance(data, dict):
         return None
-    # Some versions expose the source bundle; reject another player when known.
-    bundle = (data.get("bundleIdentifier") or data.get("kMRMediaRemoteNowPlayingInfoBundleIdentifier")
-              or data.get("kMRNowPlayingClientUserInfoBundleIdentifier"))
-    if bundle and bundle not in ("com.netease.163music", "com.netease.cloudmusic"):
+    bundle = (data.get("bundleIdentifier")
+              or data.get("kMRMediaRemoteNowPlayingInfoBundleIdentifier")
+              or data.get("kMRNowPlayingClientUserInfoBundleIdentifier")
+              or data.get("kMRMediaRemoteNowPlayingInfoClientBundleIdentifier"))
+    allowed = ALLOWED_BUNDLES if allowed_bundles is None else allowed_bundles
+    if bundle and bundle not in allowed:
         return None
     title = data.get("kMRMediaRemoteNowPlayingInfoTitle", "")
     artist = data.get("kMRMediaRemoteNowPlayingInfoArtist", "") or ""
+    album = data.get("kMRMediaRemoteNowPlayingInfoAlbum", "") or ""
     if not isinstance(title, str) or not title.strip() or not isinstance(artist, str):
         return None
-    if max(len(title), len(artist)) > 1024:
+    if max(len(title), len(artist), len(str(album))) > 1024:
         return None
     duration = int(_finite(data.get("kMRMediaRemoteNowPlayingInfoDuration"), 86400) * 1000)
     position = int(_finite(data.get("kMRMediaRemoteNowPlayingInfoElapsedTime"), 86400) * 1000)
     rate = _finite(data.get("kMRMediaRemoteNowPlayingInfoPlaybackRate"), 4)
-    # A system uniqueIdentifier is not necessarily a NetEase song ID.
     return NowPlaying("playing" if rate > 0 else "paused", title.strip(), artist.strip(),
-                      duration, min(position, duration) if duration else position, rate=rate)
+                      duration, min(position, duration) if duration else position, rate=rate,
+                      album=str(album).strip(), bundle=str(bundle or ""))
 
 
-def query_nowplaying(cli):
+def query_nowplaying(cli, allowed_bundles=None):
     if not cli:
         return None
     result = subprocess.run([cli, "get-raw"], capture_output=True, text=True, encoding="utf-8",
                             timeout=2, check=True)
     if not result.stdout.strip() or result.stdout.strip() == "null":
         return None
-    return parse_nowplaying(json.loads(result.stdout))
+    return parse_nowplaying(json.loads(result.stdout), allowed_bundles=allowed_bundles)
+
+
+def load_qqmusic_lyrics(info, cache_reader=None, cancelled=lambda: False):
+    from qqmusic import QQSnapshot
+    from qqmusic_lyrics import load_song_lyrics as qq_load_lyrics
+    snapshot = QQSnapshot(
+        title=info.title,
+        artist=info.artist,
+        album=getattr(info, "album", "") or "",
+        duration_ms=info.duration_ms,
+        position_ms=info.position_ms,
+        playing=info.state == "playing",
+        rate=getattr(info, "rate", 1.0),
+    )
+    if cache_reader is not None:
+        try:
+            cache_result = cache_reader.load(snapshot, cancelled=cancelled)
+            if cache_result and cache_result.document:
+                return cache_result
+        except Exception as error:
+            logger.debug("QQ Music cache lookup skipped: %s", error)
+    return qq_load_lyrics(snapshot, cancelled=cancelled)
 
 
 def _api(path, values, post=False):
@@ -246,25 +278,38 @@ class MacNeteasePlayer(QObject):
     analysis_error = "macOS 暂未接入真实音频强弱，请选择轻波浪。"
 
     def __init__(self, parent=None, *, query=None, loader=load_song_lyrics, clock=time.monotonic,
-                 executor=None, autostart=True):
+                 executor=None, autostart=True, source_mode="auto", cache_directory="", cache_reader=None):
         super().__init__(parent)
         self.cli = find_nowplaying_cli() if query is None else None
-        self._query = query or (lambda: query_nowplaying(self.cli))
+        self.source_mode = source_mode
+        self._custom_query = query is not None
+        allowed = None
+        if source_mode == "qqmusic":
+            allowed = QQMUSIC_BUNDLES
+        elif source_mode == "netease":
+            allowed = NETEASE_BUNDLES
+        self._allowed_bundles = allowed
+        self._query = query or (lambda: query_nowplaying(self.cli, allowed_bundles=self._allowed_bundles))
         self._loader, self._clock = loader, clock
+        self._custom_loader = loader is not load_song_lyrics
         self._executor = executor or ThreadPoolExecutor(max_workers=2, thread_name_prefix="mac-lyrics")
         self._owns_executor = executor is None
         self.playing = self.ended = self.connected = self.lyrics_received = False
         self.enabled = True
         self.song_id = self.title = self.artist = ""
         self.duration = 0
-        self.status = ("等待网易云音乐播放" if query or self.cli else
-                       "未找到 nowplaying-cli；请先运行 brew install nowplaying-cli，再重新启动。")
+        self._active_source = "qqmusic" if source_mode == "qqmusic" else "netease"
+        from qqmusic_cache import QQCacheReader
+        self._cache_reader = cache_reader or (QQCacheReader(cache_directory) if (cache_directory or source_mode != "netease") else None)
+        self.status = self._default_status()
+        self.lyric_status = f"等待{self.source_short}歌词"
         self._anchor = self._at = self._last_poll = 0
         self._rate = 1
         self._last_raw = None
         self.lyric_offset_ms = 0
         self._offset_store = None
         self._cache = OrderedDict()
+        self._cache_msg = {}
         self._poll_future = self._lyrics_job = None
         self._generation = 0
         self._info = None
@@ -275,6 +320,71 @@ class MacNeteasePlayer(QObject):
         self.timer.timeout.connect(self._tick)
         if autostart:
             self.timer.start()
+
+    def _default_status(self):
+        if not (self._custom_query or self.cli):
+            return "未找到 nowplaying-cli；请先运行 brew install nowplaying-cli，再重新启动。"
+        if self.source_mode == "qqmusic":
+            return "等待 QQ 音乐播放歌曲"
+        elif self.source_mode == "netease":
+            return "等待网易云音乐播放"
+        else:
+            return "等待音乐播放（支持 QQ 音乐 / 网易云）"
+
+    @property
+    def is_qqmusic(self):
+        if self.source_mode == "qqmusic":
+            return True
+        if self.source_mode == "netease":
+            return False
+        return self._active_source == "qqmusic"
+
+    @property
+    def source_name(self):
+        return "QQ 音乐" if self.is_qqmusic else "网易云音乐"
+
+    @property
+    def source_short(self):
+        return "QQ 音乐" if self.is_qqmusic else "网易云"
+
+    @property
+    def connect_hint(self):
+        return ("打开 QQ 音乐并播放歌曲；若未连接，请在 QQ 音乐中播放。"
+                if self.is_qqmusic else "请在网易云中点击“都市回响”启用效果。")
+
+    @property
+    def cache_status(self):
+        return self._cache_reader.status if self._cache_reader else "歌词缓存：自动检测"
+
+    def configure_cache_directory(self, directory):
+        from qqmusic_cache import QQCacheReader
+        self._cache_reader = QQCacheReader(directory)
+        self._cache.clear()
+        self._cache_msg.clear()
+        if self.connected and self._info and self.is_qqmusic:
+            self.retry_lyrics()
+        self.changed.emit()
+
+    def retry_lyrics(self):
+        if self.connected and self._info:
+            self._cache.pop(self.song_id, None)
+            self._cache_msg.pop(self.song_id, None)
+            self._needs_lyrics = True
+            self._retry_at = 0
+            if self._lyrics_job:
+                self._lyrics_job[2].cancel()
+                self._lyrics_job = None
+            self.lyric_status = f"正在重新获取{self.source_short}歌词…"
+            loader_fn = self._get_loader()
+            self._lyrics_job = (self._generation, self.song_id, self._executor.submit(loader_fn, self._info))
+            self.changed.emit()
+
+    def _get_loader(self):
+        if self._custom_loader:
+            return self._loader
+        if self.is_qqmusic:
+            return lambda info: load_qqmusic_lyrics(info, cache_reader=self._cache_reader)
+        return self._loader
 
     def _capture(self):
         return self._query(), self._clock()
@@ -303,23 +413,44 @@ class MacNeteasePlayer(QObject):
                 self._lyrics_job = None
                 if generation == self._generation and key == self.song_id:
                     try:
-                        document = future.result()
+                        raw_result = future.result()
+                        if hasattr(raw_result, "document"):
+                            document = raw_result.document
+                            message = raw_result.message
+                        elif isinstance(raw_result, LyricDocument) or raw_result is None:
+                            document = raw_result
+                            if self.is_qqmusic:
+                                message = (f"QQ 音乐歌词已同步 · {len(document.lines)} 句"
+                                           if document else "本曲暂无歌词或为纯音乐，桌面保持空白。")
+                            else:
+                                message = "已连接网易云音乐" if document else "本曲未匹配到歌词，保持空白。"
+                        else:
+                            document = None
+                            message = "本曲未匹配到歌词，保持空白。"
                         self._cache[key] = document
+                        self._cache_msg[key] = message
                         self._cache.move_to_end(key)
                         while len(self._cache) > 32:
-                            self._cache.popitem(last=False)
+                            popped_k, _ = self._cache.popitem(last=False)
+                            self._cache_msg.pop(popped_k, None)
                         self._needs_lyrics = False
                         self.lyrics_received = True
-                        self.status = "已连接网易云音乐" if document else "本曲未匹配到歌词，保持空白。"
+                        self.status = message
+                        self.lyric_status = message
                         self.document_changed.emit(document)
                     except Exception as error:
                         logger.warning("Mac lyric lookup failed: %s", error)
                         self.lyrics_received = True
                         self._retry_at = now + 10
-                        self.status = "歌词获取暂时失败，10 秒后自动重试；音乐播放不受影响。"
+                        self.status = f"{self.source_short}歌词获取暂时失败，10 秒后自动重试；音乐播放不受影响。"
+                        if self.is_qqmusic:
+                            self.lyric_status = f"{self.source_short}歌词获取失败，可点击“重新获取歌词”重试。"
+                        else:
+                            self.lyric_status = self.status
                     self.changed.emit()
         if self._lyrics_job is None and self._needs_lyrics and self.connected and now >= self._retry_at:
-            self._lyrics_job = (self._generation, self.song_id, self._executor.submit(self._loader, self._info))
+            loader_fn = self._get_loader()
+            self._lyrics_job = (self._generation, self.song_id, self._executor.submit(loader_fn, self._info))
 
     def apply(self, info, captured=None):
         if self._closed:
@@ -331,10 +462,16 @@ class MacNeteasePlayer(QObject):
                 self._generation += 1
                 self._needs_lyrics = self.lyrics_received = False
                 self.song_id = ""
-                self.status = "等待网易云音乐播放；请确认它是系统当前播放来源。"
+                self.status = f"等待{self.source_short}播放；请确认它是系统当前播放来源。"
+                self.lyric_status = f"等待{self.source_short}歌词"
                 self.document_changed.emit(None)
                 self.changed.emit()
             return
+        if getattr(info, "bundle", ""):
+            if info.bundle in QQMUSIC_BUNDLES:
+                self._active_source = "qqmusic"
+            elif info.bundle in NETEASE_BUNDLES:
+                self._active_source = "netease"
         now = self._clock() if captured is None else captured
         key = json.dumps([info.title, info.artist, info.duration_ms], ensure_ascii=False)
         switched = key != self.song_id
@@ -358,12 +495,16 @@ class MacNeteasePlayer(QObject):
                 self.offset_changed.emit()
             self._retry_at = 0
             self._needs_lyrics = key not in self._cache
-            self.status = "正在匹配网易云歌词…"
+            self.status = f"正在获取{self.source_short}歌词…" if self.is_qqmusic else "正在匹配网易云歌词…"
+            self.lyric_status = self.status
             if key in self._cache:
                 self._cache.move_to_end(key)
                 self.lyrics_received = True
-                self.status = "已连接网易云音乐" if self._cache[key] else "本曲未匹配到歌词，保持空白。"
-                self.document_changed.emit(self._cache[key])
+                doc = self._cache[key]
+                msg = self._cache_msg.get(key, f"已连接{self.source_short}" if doc else "本曲未匹配到歌词，保持空白。")
+                self.status = msg
+                self.lyric_status = msg
+                self.document_changed.emit(doc)
         if jumped:
             self.discontinuity.emit()
         self.changed.emit()
@@ -411,3 +552,6 @@ class MacNeteasePlayer(QObject):
         if self._owns_executor:
             self._executor.shutdown(wait=False, cancel_futures=True)
         self.playing = False
+
+
+MacMusicPlayer = MacNeteasePlayer

@@ -539,7 +539,7 @@ class ControlPanel(QWidget):
         song_body.addWidget(self.track_duration)
         body.addWidget(self.song_row)
         lyrics, lyrics_body = card("桌面歌词")
-        self.lyric_label = label("导入音乐后，自动查找同目录的同名 LRC 歌词。", "muted")
+        self.lyric_label = label("导入音乐后，自动查找同目录的同名 LRC 或 QRC 歌词。", "muted")
         lyrics_body.addWidget(self.lyric_label)
         self.retry_lyrics_button = QPushButton("重新获取歌词")
         self.retry_lyrics_button.setAccessibleName("重新获取当前歌曲歌词")
@@ -987,14 +987,16 @@ class ControlPanel(QWidget):
         self.format_label.setText(path.suffix.lstrip(".").upper() or "音频")
         self.footer_detail.setText(f"{self.format_label.text()} · 桌面音乐伴侣")
         self.lyric_label.setToolTip("")
-        self.lyric_label.setText("未找到同名 LRC。点击“选择歌词”手动导入。")
+        self.lyric_label.setText("未找到同名 LRC 或 QRC。点击“选择歌词”手动导入。")
         matching = path.with_suffix(".lrc")
+        if not matching.is_file():
+            matching = path.with_suffix(".qrc")
         if matching.is_file():
             self.open_lyrics(matching)
         self._refresh_state()
 
     def choose_lyrics(self):
-        path, _ = QFileDialog.getOpenFileName(self, "选择 LRC 歌词", "", "LRC 歌词 (*.lrc);;所有文件 (*)")
+        path, _ = QFileDialog.getOpenFileName(self, "选择歌词文件", "", "歌词文件 (*.lrc *.qrc);;LRC 歌词 (*.lrc);;QQ 音乐 QRC 歌词 (*.qrc);;所有文件 (*)")
         if path:
             self.open_lyrics(path)
 
@@ -1271,18 +1273,22 @@ class ControlPanel(QWidget):
         if hasattr(self.player, "cache_status"):
             self.qq_cache_status.setText(self.player.cache_status)
         if self.external:
+            source_short = getattr(self.player, "source_short", self.source_short)
+            source_name = getattr(self.player, "source_name", self.source_name)
+            self.format_label.setText(source_short)
+            self.external_transport.setText(f"{source_short}播放")
+            self.music_hint.setText(f"在{source_short}中选择歌曲，这里负责桌面歌词效果。")
             self.compatibility_label.setText(getattr(self.player, "compatibility_status", "兼容检测：等待播放器信息。"))
             self.play_button.setEnabled(False)
             self.play_button.setIcon(symbol_icon("pause" if self.player.playing else "play", accent_text(self.prefs.theme)))
-            self.play_button.setToolTip(f"播放、暂停和音量请在{self.source_short}中操作。")
-            self.play_button.setAccessibleName(f"由{self.source_short}控制播放")
+            self.play_button.setToolTip(f"播放、暂停和音量请在{source_short}中操作。")
+            self.play_button.setAccessibleName(f"由{source_short}控制播放")
             self.tray_play.setEnabled(False)
-            self.tray_play.setText(f"由{self.source_short}控制播放")
-            title = self.player.title or f"等待{self.source_short}播放音乐"
-            self._set_song_title(title, self.source_name + " · " + self.player.artist)
-            self.source_label.setText(self.player.artist or getattr(self.player, "connect_hint", "请在网易云中点击“都市回响”启用效果。"))
+            self.tray_play.setText(f"由{source_short}控制播放")
+            title = self.player.title or f"等待{source_short}播放音乐"
+            self._set_song_title(title, source_name + " · " + self.player.artist)
+            self.source_label.setText(self.player.artist or getattr(self.player, "connect_hint", f"请在{source_short}中播放歌曲。"))
             self.footer_detail.setText(self.player.artist or self.player.status)
-            self.format_label.setText(self.source_short)
             self.track_number.setText("01" if self.player.song_id else "—")
             self.playback_status.setText("播放中" if self.player.playing else "已暂停" if self.player.connected else "未连接")
             self.notice.setText(self.player.status)

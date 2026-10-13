@@ -28,7 +28,7 @@ Windows ZIP 和已有网易云联动安装流程继续使用；它们不适用�
 1. 完整解压对应 ZIP，将 **都市回响.app** 拖到“应用程序”。
 2. 首次使用运行包内 **安装播放读取工具.command**。已有 Homebrew 时安装 `nowplaying-cli`；
    未安装 Homebrew 时先按 [Homebrew 官网](https://brew.sh/) 操作再重试，也可以在终端运行 `brew install nowplaying-cli`。
-3. 在网易云 Mac 客户端播放歌曲，再打开 **都市回响.app**。音乐仍由网易云播放，请暂停其他播放器或浏览器媒体。
+3. 在网易云或 QQ 音乐 Mac 客户端播放歌曲，再打开 **都市回响.app**（或使用 **启动.command** / **启动QQ音乐联动.command**）。音乐仍由客户端播放，请暂停其他播放器或浏览器媒体。
 
 应用目前采用 ad-hoc 签名，**没有 Apple Developer ID 签名或公证**。
 若提示无法验证开发者，确认来源和 ZIP 校验值后，在“系统设置 → 隐私与安全性”中为本应用选择“仍要打开”，
@@ -40,9 +40,9 @@ Windows ZIP 和已有网易云联动安装流程继续使用；它们不适用�
 
 ## 源码安装与启动（开发者）
 
-需要 Python **3.10–3.12**（推荐 3.11 / 3.12）、网易云 Mac 客户端及 Homebrew 外部工具。
+需要 Python **3.10–3.12**（推荐 3.11 / 3.12）、网易云或 QQ 音乐 Mac 客户端及 Homebrew 外部工具。
 当前锁定的 NumPy 1.26.4 不支持 Python 3.13；安装脚本会拒绝不支持的解释器。
-macOS 与网易云具体版本的兼容范围待真机确认，不套用 Windows 的客户端版本限制。
+macOS 与客户端具体版本的兼容范围待真机确认，不套用 Windows 的客户端版本限制。
 
 1. 通过 [Homebrew](https://brew.sh/) 安装 `python@3.12` 与
    [nowplaying-cli](https://github.com/kirtan-shah/nowplaying-cli)：
@@ -58,27 +58,28 @@ macOS 与网易云具体版本的兼容范围待真机确认，不套用 Windows
    bash 安装.sh
    ```
 
-3. 打开网易云 Mac 客户端并播放歌曲，然后双击 **启动.command**，或运行：
+3. 打开网易云或 QQ 音乐 Mac 客户端并播放歌曲，然后双击 **启动.command**（自动识别当前播放器）、**启动QQ音乐联动.command**，或运行：
 
    ```bash
-   bash start.sh
+   bash start.sh            # 自动识别 QQ 音乐与网易云
+   bash start.sh --qqmusic  # 强制仅联动 QQ 音乐
+   bash start.sh --netease  # 强制仅联动网易云
    ```
 
 `启动.command` 在启动失败时保留错误提示。需要帮助时附上终端输出及 `.state/app.log`，
 分享日志前检查是否包含个人文件路径。
 源码版可用 `.venv/bin/python main_mac.py --check` 检查外部工具是否存在；这项检查不代表真实播放已经验证。
 自定义工具路径可设置 `NOWPLAYING_CLI`，自定义设置目录使用 `bash start.sh --state-dir "/可写目录"`。
-`bash start.sh --local` 启动原有本地音乐与 LRC 模式。
+`bash start.sh --local` 启动原有本地音乐与 LRC / QRC 模式。
 
 ## 行为与限制
 
-- 音乐播放、暂停、切歌、进度及音量都在网易云中操作；适配器仅读取信息，不发送播放控制命令。
-- 系统 Now Playing 信息约每 500ms 读取一次。没有来源标识时无法保证它来自网易云，
-  请暂停其他音乐或浏览器媒体；有已知来源标识时拒绝其他播放器。
+- 音乐播放、暂停、切歌、进度及音量都在网易云或 QQ 音乐自身操作；适配器仅读取信息，不发送播放控制命令。
+- 系统 Now Playing 信息约每 500ms 读取一次。支持自动识别 QQ 音乐（`com.tencent.QQMusicMac`）和网易云（`com.netease.163music`、`com.netease.cloudmusic`），拒绝其他播放器或浏览器媒体；检测到 QQ 音乐时面板与播放栏自动切换为“QQ 音乐播放”，并匹配 QQ 音乐歌词与 QRC 缓存。
 - 外部工具的 `get-raw` 必须输出 JSON。工具使用 macOS 私有框架，系统升级可能使读取失效；
   [工具作者说明](https://github.com/kirtan-shah/nowplaying-cli#readme)中的测试记录不等于本项目验证结果。
-- 根据歌名、艺人和时长联网匹配网易云歌词，使用原分支的接口；这些接口没有稳定性承诺。
-  未准确匹配、纯音乐或无歌词时保持空白；网络失败显示提示并重试，不替换成另一首有歌词的歌。
+- 网易云根据歌名、艺人和时长联网匹配歌词，使用原分支的接口；QQ 音乐使用匿名接口搜索并加载歌词，优先读取本地 QRC 缓存。未准确匹配、纯音乐或无歌词时保持空白；网络失败显示提示并重试，不替换成另一首有歌词的歌。
+- 支持 QQ 音乐专属 QRC 歌词文件格式与本地缓存读取，支持带有逐字演唱强调的 QRC 歌词解析；本地播放时同样支持导入 `.qrc` 歌词文件。
 - 中文翻译、真实 YRC 时间、白芯发光、卡门的声音、四种动画、效果预设与主题继续使用共用模块。
   YRC 只在原文一致且句首时间差不超过 250ms 时绑定，不人为拆分英文词或 emoji。
 - 尚无真实音乐强弱采集，首次运行默认使用“轻波浪”，不使用模拟能量冒充音频分析。
