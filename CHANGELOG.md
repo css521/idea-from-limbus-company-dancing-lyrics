@@ -2,6 +2,37 @@
 
 每次改动按日期追加记录，包含改动目的、涉及文件、测试与验证结果、影响或已知限制。
 
+## 2026-10-13：支持多屏幕选择显示与 macOS 暂停状态检测修复
+
+### 改动
+
+- 支持选择屏幕显示（多显示器支持）：
+  1. 在 `settings.py` 中为 `Preferences` 增加 `target_screen` 偏好字段（默认空字符串代表跟随主屏幕），并在 `presets.py` 的效果预设排除项中排除该字段，确保预设切换不改变用户的屏幕选择。
+  2. 在 `overlay.py` 中改造屏幕绑定逻辑：根据 `target_screen` 匹配当前连接的显示器名称（`QScreen.name()`），屏幕未找到或拔出时自动回退至系统主屏幕；监听 `primaryScreenChanged`、`screenAdded` 与 `screenRemoved` 事件，支持屏幕热插拔自适应更新；窗口切换屏幕时自动更新几何位置（`setGeometry`）、原生屏幕归属（`windowHandle().setScreen`）并清理排版与文字效果纹理缓存。
+  3. 在 `controls.py` 的“显示与文字”设置分组中增加“显示屏幕”下拉框，列出当前所有物理显示器名称与分辨率（自动标明主屏幕），支持动态热插拔刷新，选项修改后即时生效并保存到配置文件。
+- 修复 macOS QQ 音乐暂停后 app 播放未停止的问题：
+  1. 根因：QQ 音乐 Mac 客户端暂停时未将系统的 `kMRMediaRemoteNowPlayingInfoPlaybackRate` 设置为 0（仍保持为 1），而播放位置 `ElapsedTime` 保持静止；原先播放器单凭 `rate > 0` 判定为播放中，且时钟插值保护未限制单次轮询累加，导致客户端暂停后 app 依然单方面推进进度并持续播放歌词动画。
+  2. 在 `macos_netease.py` 中增加静止检测（Stall Detection）：当采样位置连续 1.2 秒未前进时，即使 `rate > 0` 也准确识别为暂停（`playing = False`），停止本地时钟插值并将位置稳定冻结在实际毫秒数；当位置恢复递增时立即恢复 `playing = True`。
+  3. 修复 `position()` 的插值上限，最多基于锚点外推 1.2 秒，防止无数据时进度无休止递增；播放器暂停时自动触发 `changed` 信号，使 `LyricsOverlay` 的高精度刷新定时器停止运作，完全冻结画面。
+- 重新使用 `tools/build_macos.py` 打包最新 `build/macos-dist/都市回响.app` 与 `artifacts/mac-release/city-echoes-0.6.0-beta.2-macos.1-arm64.zip`。
+
+### 测试与验证
+
+- 自动化单元测试：
+  - 在 `tests/test_macos.py` 中新增 `test_qqmusic_playback_stalled_detects_pause_and_freezes_position` 测试，验证 QQ 音乐在 rate=1 但位置静止时能够正确识别暂停，`position()` 冻结且恢复播放后平滑接续。
+  - 在 `tests/test_macos.py` 中新增 `test_screen_selection_and_overlay_binding` 测试，验证屏幕选择、指定副屏、不存在屏幕回退主屏以及控制面板 UI 下拉框交互。
+  - 运行 `./.venv/bin/python -m unittest tests/test_macos.py`：34 项测试全部通过（OK）。
+  - 运行全套相关测试：`test_core.py`、`test_workflow_docs.py`、`test_mac_distribution.py`、`test_qqmusic.py`、`test_qqmusic_cache.py` 共 110 项全部通过（1 项跳过）。
+- 打包产物校验：
+  - 生成 `build/macos-dist/都市回响.app`，`codesign --verify` 校验签名有效。
+  - 发布归档 `artifacts/mac-release/city-echoes-0.6.0-beta.2-macos.1-arm64.zip`（SHA-256: `ce5405d29e013d96c134d572ac9141bf3c905ecaf3dc231abca9f7ed6ee2c7df`，大小: 55,114,632 字节）。
+
+### 影响与限制
+
+- 屏幕选择通过 Qt 跨平台接口（`QScreen`）实现，支持 macOS 与 Windows 多显示器环境；
+- 静止暂停检测容差为 1.2 秒，既能平滑吸收网络或客户端 1 秒一次的采样抖动，又能确保在用户按下暂停后快速响应并冻结歌词；
+- 其它原有视觉效果、逐字歌词渲染和网易云客户端联动行为均保持完全兼容。
+
 ## 2026-10-13：macOS QQ 音乐接口 2001 修复与歌词自适应回退
 
 ### 改动

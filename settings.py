@@ -48,6 +48,7 @@ class Preferences:
     prefer_translation: bool = False
     theme: str = "light"
     qq_cache_directory: str = ""
+    target_screen: str = ""
 
 
 class SettingsStore:
@@ -101,6 +102,9 @@ def normalize_preferences(prefs):
     prefs.qq_cache_directory = prefs.qq_cache_directory.strip()
     if len(prefs.qq_cache_directory)>4096 or any(c in prefs.qq_cache_directory for c in "\n\r\x00"):
         prefs.qq_cache_directory = ""
+    prefs.target_screen = prefs.target_screen.strip()
+    if len(prefs.target_screen) > 256 or any(c in prefs.target_screen for c in "\n\r\x00"):
+        prefs.target_screen = ""
     if not prefs.font_family or len(prefs.font_family) > 256 or any(c in prefs.font_family for c in "\n\r\x00"):
         prefs.font_family = DEFAULT_FONT_FAMILY
     return prefs

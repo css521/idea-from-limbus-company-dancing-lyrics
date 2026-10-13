@@ -34,14 +34,32 @@ class LyricsOverlay(QWidget):
         self.layouts = {}
         self.seed = random.randrange(1_000_000)
         self._screen = None
-        self._bind_screen(QApplication.primaryScreen())
-        QApplication.instance().primaryScreenChanged.connect(self._bind_screen)
+        self._bind_screen(self._resolve_screen())
+        app = QApplication.instance()
+        if app:
+            app.primaryScreenChanged.connect(self._on_screens_changed)
+            app.screenAdded.connect(self._on_screens_changed)
+            app.screenRemoved.connect(self._on_screens_changed)
         player.discontinuity.connect(self.clear_layouts)
         self.timer = QTimer(self)
         self.timer.setTimerType(Qt.TimerType.PreciseTimer)
         self.timer.setInterval(33)
         self.timer.timeout.connect(self.update)
         player.changed.connect(self._sync_timer)
+
+    def _resolve_screen(self):
+        target = getattr(self.prefs, "target_screen", "").strip()
+        app = QApplication.instance()
+        if not app:
+            return None
+        if target:
+            for screen in app.screens():
+                if screen.name() == target:
+                    return screen
+        return app.primaryScreen()
+
+    def _on_screens_changed(self, *_):
+        self._bind_screen(self._resolve_screen())
 
     def _bind_screen(self, screen):
         if self._screen:
@@ -55,7 +73,13 @@ class LyricsOverlay(QWidget):
             self._screen_changed()
 
     def _screen_changed(self, *_):
+        if not self._screen:
+            return
+        handle = self.windowHandle()
+        if handle and handle.screen() != self._screen:
+            handle.setScreen(self._screen)
         self.setGeometry(self._screen.availableGeometry())
+        TEXT_EFFECTS.clear()
         self.clear_layouts()
 
     def set_document(self, document: LyricDocument | None):
@@ -71,6 +95,7 @@ class LyricsOverlay(QWidget):
         self._sync_timer()
 
     def refresh_preferences(self):
+        self._bind_screen(self._resolve_screen())
         self.display_document = display_document(self.document, self.prefs.prefer_translation)
         if self.document:
             self.timeline = self._timeline(self.display_document)

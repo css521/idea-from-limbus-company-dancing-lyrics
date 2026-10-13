@@ -612,6 +612,15 @@ class ControlPanel(QWidget):
         preset_body.addWidget(self.preset_status)
         body.addWidget(preset_card)
         self._reload_presets()
+        self.screen_combo = QComboBox()
+        self.screen_combo.setAccessibleName("显示屏幕")
+        self._reload_screens()
+        self.screen_combo.currentIndexChanged.connect(self._screen_selected)
+        app = QApplication.instance()
+        if app:
+            app.screenAdded.connect(self._reload_screens)
+            app.screenRemoved.connect(self._reload_screens)
+            app.primaryScreenChanged.connect(self._reload_screens)
         self.region = QComboBox()
         self.region.addItem("屏幕两侧 · 避开中央工作区", "edges")
         self.region.addItem("屏幕内自由出现", "full")
@@ -727,7 +736,7 @@ class ControlPanel(QWidget):
         self._reload_fonts()
         self.font_combo.currentIndexChanged.connect(self._font_selected)
         for title, fields in (
-            ("显示与文字", (("显示区域", self.region), ("歌词字体", font_field), ("文字样式", self.text_style),
+            ("显示与文字", (("显示屏幕", self.screen_combo), ("显示区域", self.region), ("歌词字体", font_field), ("文字样式", self.text_style),
                           ("发光风格", self.glow_variant),
                           ("文字大小", self.spins["font_size"]),
                           (self.color_label, self.color_button), ("发光强度", self.glow_field),
@@ -1104,9 +1113,33 @@ class ControlPanel(QWidget):
         if self.styleSheet() != theme_stylesheet(self.prefs.theme):
             self._apply_theme()
         self._reload_fonts()
+        self._reload_screens()
         self._update_color_button()
         self._update_effect_controls()
         self.font_preview.invalidate()
+
+    def _reload_screens(self, *_):
+        if not hasattr(self, "screen_combo"):
+            return
+        blocker = QSignalBlocker(self.screen_combo)
+        self.screen_combo.clear()
+        self.screen_combo.addItem("跟随主屏幕", "")
+        app = QApplication.instance()
+        screens = app.screens() if app else []
+        primary = app.primaryScreen() if app else None
+        for screen in screens:
+            geom = screen.geometry()
+            tag = " · 主屏幕" if (screen == primary) else ""
+            title = f"{screen.name()} ({geom.width()}×{geom.height()}){tag}"
+            self.screen_combo.addItem(title, screen.name())
+        current = getattr(self.prefs, "target_screen", "")
+        index = self.screen_combo.findData(current)
+        self.screen_combo.setCurrentIndex(index if index >= 0 else 0)
+
+    def _screen_selected(self, _index):
+        target = self.screen_combo.currentData()
+        target = "" if target is None else str(target)
+        self._set_preference("target_screen", target)
 
     def apply_preset(self, identifier):
         preset = self.presets.get(identifier)

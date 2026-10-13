@@ -361,6 +361,87 @@ class MacPlayerTests(unittest.TestCase):
             self.assertEqual(res2.document, doc)
             self.assertEqual(res2.mid, "collab_mid")
 
+    def test_qqmusic_playback_stalled_detects_pause_and_freezes_position(self):
+        clock_time = [100.0]
+        def fake_clock():
+            return clock_time[0]
+
+        player = mac.MacNeteasePlayer(autostart=False, clock=fake_clock, query=lambda: None)
+        try:
+            sample = mac.NowPlaying("playing", "Song", "Artist", 200000, 150000, rate=1.0, bundle="com.tencent.QQMusicMac")
+            player.apply(sample, captured=100.0)
+            self.assertTrue(player.playing)
+            self.assertEqual(player.position(), 150000)
+
+            # 正常推进 0.5s，因插值时间向前移动 500ms
+            clock_time[0] = 100.5
+            self.assertEqual(player.position(), 150500)
+
+            # 模拟 QQ 音乐按了暂停：nowplaying-cli 返回的 position_ms 依然是 150000，且 rate 依然是 1.0
+            # 持续 1.5 秒后（超过 1.2s 阈值）
+            clock_time[0] = 101.6
+            player.apply(sample, captured=101.6)
+            # 必须判定为暂停！
+            self.assertFalse(player.playing)
+            # 并且位置冻结在原处 150000，绝不继续累加
+            self.assertEqual(player.position(), 150000)
+
+            # 时间继续过去，位置依然静止
+            clock_time[0] = 105.0
+            self.assertEqual(player.position(), 150000)
+
+            # 当用户恢复播放，position_ms 递增到 152000
+            resumed = mac.NowPlaying("playing", "Song", "Artist", 200000, 152000, rate=1.0, bundle="com.tencent.QQMusicMac")
+            player.apply(resumed, captured=105.1)
+            self.assertTrue(player.playing)
+            self.assertEqual(player.position(), 152000)
+        finally:
+            player.stop()
+
+    def test_screen_selection_and_overlay_binding(self):
+        from overlay import LyricsOverlay
+        from settings import Preferences, SettingsStore
+        from controls import ControlPanel
+        from PySide6.QtWidgets import QApplication
+
+        app = QApplication.instance() or QApplication([])
+        prefs = Preferences()
+        player = mac.MacNeteasePlayer(autostart=False, query=lambda: None)
+        overlay = LyricsOverlay(player, prefs)
+        try:
+            # 默认跟随主屏
+            self.assertEqual(overlay._screen, app.primaryScreen())
+
+            # 若设置了屏幕名称且存在
+            screens = app.screens()
+            if screens:
+                first_name = screens[0].name()
+                prefs.target_screen = first_name
+                overlay.refresh_preferences()
+                self.assertEqual(overlay._screen, screens[0])
+
+            # 若设置了不存在的屏幕名称，优雅回退到主屏
+            prefs.target_screen = "NonExistentDisplay"
+            overlay.refresh_preferences()
+            self.assertEqual(overlay._screen, app.primaryScreen())
+
+            # 测试控制面板中的 screen_combo
+            import tempfile
+            from pathlib import Path
+            with tempfile.TemporaryDirectory() as tmpdir:
+                store = SettingsStore(Path(tmpdir) / "settings.ini")
+                panel = ControlPanel(player, overlay, prefs, store)
+                try:
+                    self.assertTrue(hasattr(panel, "screen_combo"))
+                    self.assertGreaterEqual(panel.screen_combo.count(), 1)
+                    self.assertEqual(panel.screen_combo.itemData(0), "")
+                finally:
+                    panel.tray.hide()
+                    panel.close()
+        finally:
+            player.stop()
+            overlay.close()
+
 
 
 class MacPlatformTests(unittest.TestCase):

@@ -403,6 +403,7 @@ class MacNeteasePlayer(QObject):
         self._anchor = self._at = self._last_poll = 0
         self._rate = 1
         self._last_raw = None
+        self._last_pos_advanced_at = 0
         self.lyric_offset_ms = 0
         self._offset_store = None
         self._cache = OrderedDict()
@@ -572,10 +573,25 @@ class MacNeteasePlayer(QObject):
         now = self._clock() if captured is None else captured
         key = json.dumps([info.title, info.artist, info.duration_ms], ensure_ascii=False)
         switched = key != self.song_id
-        playing = info.state == "playing"
-        jumped = switched or (self._last_raw != info.position_ms and abs(info.position_ms - self.position()) > 750)
-        if switched or self._last_raw != info.position_ms or playing != self.playing:
+        raw_playing = (info.state == "playing" and info.rate > 0)
+        if switched:
+            self._last_pos_advanced_at = now
+            playing = raw_playing
             self._anchor, self._at = info.position_ms, now
+        else:
+            if info.position_ms != self._last_raw:
+                self._last_pos_advanced_at = now
+                playing = raw_playing
+                self._anchor, self._at = info.position_ms, now
+            else:
+                if raw_playing and (now - getattr(self, "_last_pos_advanced_at", now) > 1.2):
+                    playing = False
+                    self._anchor = info.position_ms
+                    self._at = now
+                else:
+                    playing = raw_playing if (now - getattr(self, "_last_pos_advanced_at", now) <= 1.2) else False
+
+        jumped = switched or (self._last_raw is not None and self._last_raw != info.position_ms and abs(info.position_ms - self.position()) > 750)
         self._last_poll, self._last_raw = now, info.position_ms
         self._rate = info.rate
         self.connected, self.playing = True, playing
@@ -607,7 +623,9 @@ class MacNeteasePlayer(QObject):
         self.changed.emit()
 
     def position(self):
-        elapsed = max(0, min(self._clock(), self._last_poll + 1.5) - self._at) * 1000 if self.playing else 0
+        if not self.playing:
+            return max(0, min(self._anchor, self.duration)) if self.duration else max(0, self._anchor)
+        elapsed = max(0, min(self._clock(), self._at + 1.2) - self._at) * 1000
         value = self._anchor + elapsed * self._rate
         return max(0, min(value, self.duration)) if self.duration else max(0, value)
 
