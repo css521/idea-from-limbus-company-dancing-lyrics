@@ -40,7 +40,7 @@ class QQMusicSmokeCheck:
         if doc and self.effect_check is None:
             before = (p.song_id, p._anchor, p.playing, p.duration)
             original = panel.prefs.animation_style
-            for style in ("ripple_wave","ripple_shake","fall_wave","fall_shake",original):
+            for style in ("ripple_wave","ripple_shake","fall_wave","fall_shake","glitch_wave","glitch_shake",original):
                 panel.animation_combo.setCurrentIndex(panel.animation_combo.findData(style))
             old = panel.translation_checkbox.isChecked()
             panel.translation_checkbox.setChecked(not old)

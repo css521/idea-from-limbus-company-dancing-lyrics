@@ -2,6 +2,38 @@
 
 每次改动按日期追加记录，包含改动目的、涉及文件、测试与验证结果、影响或已知限制。
 
+## 2026-10-14：新增边狱公司／月亮门世界观专属风格“扭曲·故障频闪 (Distortion / Glitch)”歌词动画特效
+
+### 改动
+
+- 新增边狱公司／月亮门世界观“扭曲·故障频闪 (Distortion / Glitch)”动画风格：
+  1. 风格注册：在 `settings.py` 的 `ANIMATION_STYLES` 中新增 `"glitch_wave": "扭曲·波动"` 与 `"glitch_shake": "扭曲·抖动"`，配置支持持久化存储与无效值安全回退。
+  2. 纯函数阶梯时钟与断裂错位：在 `glyph_motion.py` 中扩展 `GlyphState` 增加 `split`（色散偏移量）。在入场（`stagger` entering）和退场（`stagger` leaving）时引入高频阶梯时间时钟，产生水平切片断裂错位（`glitch_dx`）与轻微旋转撕裂；在平稳播放时，以确定性伪随机检测由稳定种子和音乐能量共同激发的故障脉冲窗口，在窗口内产生单字微错位与频闪抖动。当用户设置 `jump = 0` 时，严格归零所有偏移，保证静止基线对齐。
+  3. RGB 色散分色（Chromatic Aberration）：在 `text_effects.py` 中扩展 `_materials`，为每个字形在冷准备阶段预生成预乘 RGBA 的色散鬼影图像（标准发光下对应异想体共振青色 `#00e6ff` 与深赤色 `#f5324b`；卡门发光下对应琥珀金色 `#ffb93c` 与猩红血色 `#eb2d3c`）。在 `_render_states` 渲染时，当 `state.split > 0` 时分别向左偏移绘制青色/金色层、向右偏移绘制赤色层，中心保留清晰锐利的字身白芯与描边。
+  4. 极限包围盒与零动态开销：更新 `glyph_motion.py` 中的 `motion_bounds`，为故障撕裂与色散预留充足的包围盒边距，确保在不同分屏比例（DPR 1.0、1.25、1.5、2.0）及倾斜排版下文字边框像素完全为 0 不发生裁剪截断；色散图层完全复用预计算材质，暖帧渲染 P95 维持在 12~16ms，远低于 33ms 限制。
+  5. 控制面板联动：在 `controls.py` 中，动画下拉框自动呈现 7 项完整动画模式；选择“扭曲·抖动”时启用抖动频率调节，“扭曲·波动”时自动禁用频率与跌落距离，与现有参数逻辑完美协同。
+
+### 测试与验证
+
+- 自动化单元测试：
+  - 在 `tests/test_glyph_motion.py` 中新增 `test_glitch_deterministic_jitter_chromatic_split_and_jump_scaling`，验证故障位移与色散确定性、复现性、种子差异性及零 jump 下的基线保持；并验证 `test_all_modes_custom_font_extreme_layout_and_dpr_have_clear_edges`（6 种逐字模式全量通过）与 `test_overlay_pause_seek_and_setting_change_preserve_transport`（暂停完全冻结，跳转重现一致）；
+  - 在 `tests/test_text_effects.py` 中新增 `test_glitch_chromatic_split_renders_offset_colored_fringes_and_leaves_core_intact`，验证左右青/红色散边缘及白芯完整性；
+  - 在 `tests/test_controls.py` 中更新动画选项总数断言（由 5 项提升为 7 项），并新增 `glitch_shake` 与 `glitch_wave` 控件启用/禁用联动测试；
+  - 在 `tests/test_effect_parameters.py` 中将两种扭曲风格纳入入场/退场速率缩放测试；
+  - 在 `tests/test_presets.py` 中完善跨平台预设字体断言。
+- 完整测试套件与性能基准：
+  - 运行 `python -m unittest tests/test_core.py tests/test_workflow_docs.py tests/test_macos.py tests/test_glyph_motion.py tests/test_text_effects.py tests/test_singing_sync.py tests/test_effect_parameters.py tests/test_presets.py tests/test_qqmusic.py -v`：全部通过。
+  - 运行 `python main.py --smoke`：全量烟雾测试与性能基准通过（`passed: true`）：
+    - `glitch_wave`：暖帧 P95 为 16.134ms（带逐字演唱为 15.894ms）；
+    - `glitch_shake`：暖帧 P95 为 12.257ms（带逐字演唱为 12.905ms）；
+    - 全部低于 33ms 阈值，缓存占用在 64MiB 范围内，暂停完全冻结。
+
+### 影响与限制
+
+- 动画列表现已提供 7 种风格：原有效果 · 整句渐隐、波纹·波动、波纹·抖动、跌落·波动、跌落·抖动、扭曲·波动、扭曲·抖动；
+- 扭曲风格完美呈现 Project Moon / 边狱公司独有的现实失真、频闪撕裂与异想体 RGB 色散美学；
+- 保持 100% 纯函数与无状态性，暂停时无任何动态游走，跳转进度条完美复现。
+
 ## 2026-10-14：修复按钮点击高亮圆框问题与 QQ 音乐暂停 6 秒延迟问题
 
 ### 改动

@@ -546,6 +546,12 @@ class ControlPanelTests(unittest.TestCase):
         self.assertTrue(self.panel.parameter_fields["shake_frequency"].isEnabled())
         self.assertTrue(self.panel.parameter_fields["fall_distance"].isEnabled())
         self.panel.spins["shake_frequency"].setValue(12)
+        self.panel.animation_combo.setCurrentIndex(self.panel.animation_combo.findData("glitch_shake"))
+        self.assertTrue(self.panel.parameter_fields["shake_frequency"].isEnabled())
+        self.assertFalse(self.panel.parameter_fields["fall_distance"].isEnabled())
+        self.panel.animation_combo.setCurrentIndex(self.panel.animation_combo.findData("glitch_wave"))
+        self.assertFalse(self.panel.parameter_fields["shake_frequency"].isEnabled())
+        self.assertFalse(self.panel.parameter_fields["fall_distance"].isEnabled())
         self.panel.animation_combo.setCurrentIndex(self.panel.animation_combo.findData("ripple_wave"))
         self.assertEqual(self.store.load().shake_frequency, 12)
         self.assertFalse(self.panel.parameter_fields["fall_distance"].isEnabled())
@@ -556,7 +562,7 @@ class ControlPanelTests(unittest.TestCase):
         self.player.playing, self.player.clock = True, 6500
         self.click(self.panel.nav_buttons[1])
         self.assertEqual(self.panel.animation_combo.currentData(), "classic")
-        self.assertEqual(self.panel.animation_combo.count(), 5)
+        self.assertEqual(self.panel.animation_combo.count(), 7)
         for style in ANIMATION_STYLES:
             self.panel.animation_combo.setCurrentIndex(self.panel.animation_combo.findData(style))
             self.assertEqual(self.store.load().animation_style, style)

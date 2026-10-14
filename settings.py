@@ -13,6 +13,7 @@ ANIMATION_STYLES = {
     "classic": "原有效果 · 整句渐隐",
     "ripple_wave": "波纹·波动", "ripple_shake": "波纹·抖动",
     "fall_wave": "跌落·波动", "fall_shake": "跌落·抖动",
+    "glitch_wave": "扭曲·波动", "glitch_shake": "扭曲·抖动",
 }
 
 

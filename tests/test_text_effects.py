@@ -100,7 +100,7 @@ class TextEffectsTests(unittest.TestCase):
         self.prefs.color = "#0080ff"
         core, outline, halo = effect_palette(self.prefs)
         self.assertEqual((core.name(), outline.name(), halo.name()), ("#ffe6bd", "#f2b772", "#ffb655"))
-        for style in ("classic", "ripple_wave", "fall_shake"):
+        for style in ("classic", "ripple_wave", "fall_shake", "glitch_wave", "glitch_shake"):
             self.prefs.animation_style = style
             surface = self.surface()
             states = None if style == "classic" else [GlyphState(0, 0)]
@@ -115,6 +115,21 @@ class TextEffectsTests(unittest.TestCase):
             self.assertEqual(self.sample(surface, 10, 10), core)
             self.assertEqual(self.sample(surface, -5, 10).alpha(), 0)
             self.prefs.glow_strength = 60
+
+    def test_glitch_chromatic_split_renders_offset_colored_fringes_and_leaves_core_intact(self):
+        from glyph_motion import GlyphState
+        self.prefs.animation_style = "glitch_wave"
+        self.prefs.glow_strength = 0
+        surface = self.surface()
+        self.effects.render(surface, self.prefs, states=[GlyphState(0, 0, split=4.0)])
+        center = self.sample(surface, 10, 10)
+        self.assertEqual(center, QColor("#ffffff"))
+        left = self.sample(surface, -3, 10)
+        self.assertGreater(left.alpha(), 0)
+        self.assertGreater(left.blue(), left.red())
+        right = self.sample(surface, 23, 10)
+        self.assertGreater(right.alpha(), 0)
+        self.assertGreater(right.red(), right.blue())
 
     def test_carmen_cache_and_thin_font_edges_at_fractional_scale(self):
         from text_effects import effect_palette

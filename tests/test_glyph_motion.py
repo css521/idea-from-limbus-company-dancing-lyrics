@@ -145,6 +145,18 @@ class CharacterMotionTests(unittest.TestCase):
             self.assertEqual([(state.x, state.y) for state in self.states(2000, style)],
                              [(glyph.x, glyph.baseline) for glyph in self.glyphs])
 
+    def test_glitch_deterministic_jitter_chromatic_split_and_jump_scaling(self):
+        s1 = self.states(1200, "glitch_wave", jump=10, seed=42)
+        s2 = self.states(1200, "glitch_wave", jump=10, seed=42)
+        self.assertEqual(s1, s2)
+        s3 = self.states(1200, "glitch_wave", jump=10, seed=43)
+        self.assertNotEqual(s1, s3)
+        self.assertTrue(any(s.split > 0 for s in s1))
+        zero_jump = self.states(1200, "glitch_wave", jump=0)
+        self.assertTrue(all(s.split == 0 for s in zero_jump))
+        self.assertNotEqual(self.states(2000, "glitch_shake", jump=10),
+                            self.states(2000, "glitch_wave", jump=10))
+
 
 class AnimatedDrawingTests(unittest.TestCase):
     def test_character_rgba_fade_keeps_white_core_and_applies_opacity_once(self):

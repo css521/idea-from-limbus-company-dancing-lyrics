@@ -143,7 +143,8 @@ class TextEffects:
         Disjoint halo/body pixels allow all halos to precede the white cores.
         A body knockout excludes neighbouring halos underneath fading white ink.
         """
-        key = (prefs.text_style, prefs.color, prefs.glow_strength, prefs.singing_sync, prefs.glow_variant)
+        is_glitch = prefs.animation_style.startswith("glitch_")
+        key = (prefs.text_style, prefs.color, prefs.glow_strength, prefs.singing_sync, prefs.glow_variant, is_glitch)
         if surface.material_key == key:
             return surface.materials
         materials = []
@@ -198,7 +199,32 @@ class TextEffects:
                 painter.drawImage(QPointF(), glow[0])
                 painter.end()
                 pixels_view(halo)[body_pixels] = 0
-            materials.append((halo, body, origin))
+
+            split_cyan, split_red = None, None
+            if is_glitch:
+                if prefs.glow_variant == "carmen":
+                    c_cyan = (255, 185, 60)   # Carmen Golden Amber
+                    c_red = (235, 45, 60)     # Carmine Blood Red
+                else:
+                    c_cyan = (0, 230, 255)    # Resonance Cyan
+                    c_red = (245, 50, 75)     # Distortion Crimson
+                body_alpha = pixels_view(body)[:, :, 3]
+
+                split_cyan = transparent_image(bounds, dpr)
+                view_c = pixels_view(split_cyan)
+                alpha_c = (body_alpha.astype(np.float32) * 0.75).astype(np.uint8)
+                view_c[:, :, 3] = alpha_c
+                for ch, col in enumerate(c_cyan):
+                    view_c[:, :, ch] = np.rint(alpha_c.astype(np.float32) * col / 255).astype(np.uint8)
+
+                split_red = transparent_image(bounds, dpr)
+                view_r = pixels_view(split_red)
+                alpha_r = (body_alpha.astype(np.float32) * 0.75).astype(np.uint8)
+                view_r[:, :, 3] = alpha_r
+                for ch, col in enumerate(c_red):
+                    view_r[:, :, ch] = np.rint(alpha_r.astype(np.float32) * col / 255).astype(np.uint8)
+
+            materials.append((halo, body, origin, split_cyan, split_red))
         surface.materials, surface.material_key = materials, key
         return materials
 
@@ -209,12 +235,12 @@ class TextEffects:
         painter.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
         painter.translate(-surface.origin)
 
-        def draw(index, layer, opacity):
+        def draw(index, layer, opacity, dx=0.0):
             material, state = materials[index], states[index]
-            if material is None or state.opacity <= 0:
+            if material is None or state.opacity <= 0 or opacity <= 0:
                 return
             painter.save()
-            painter.translate(state.x, state.y)
+            painter.translate(state.x + dx, state.y)
             painter.rotate(state.rotation)
             painter.scale(state.scale, state.scale)
             painter.setOpacity(opacity)
@@ -232,6 +258,12 @@ class TextEffects:
             draw(index, 1, 1)
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
         for index, state in enumerate(states):
+            material = materials[index]
+            if material is not None and len(material) >= 5 and material[3] is not None:
+                split = getattr(state, "split", 0.0)
+                if split > 0:
+                    draw(index, 3, state.opacity * 0.75, dx=-split)
+                    draw(index, 4, state.opacity * 0.75, dx=split)
             draw(index, 1, state.opacity)
         painter.end()
         return surface.image

@@ -19,8 +19,9 @@ class PresetTests(unittest.TestCase):
         self.temp.cleanup()
 
     def test_builtins_match_design_and_exclude_transport_region_and_offset(self):
+        from fonts import PRESET_FONTS
         quiet, lively = self.store.all()
-        self.assertEqual((quiet.name, quiet.values["font_family"], quiet.values["entry_speed"]), ("安静办公", "SimSun", 80))
+        self.assertEqual((quiet.name, quiet.values["font_family"], quiet.values["entry_speed"]), ("安静办公", PRESET_FONTS[1][1], 80))
         self.assertEqual((lively.name, lively.values["animation_style"], lively.values["color"]), ("轻快律动", "ripple_wave", "#ff4080"))
         self.assertFalse(lively.values["singing_sync"])
         self.assertTrue(set(EFFECT_KEYS).isdisjoint(("region", "delay_ms", "volume", "theme")))

@@ -33,7 +33,7 @@ class EffectParameterTests(unittest.TestCase):
 
     def test_speed_scales_classic_and_staggered_stages_without_changing_default(self):
         doc = parse_lrc("[00:01]甲乙丙\n[00:05]下一句\n[00:12]结束")
-        for style in ("classic", "ripple_wave", "fall_shake"):
+        for style in ("classic", "ripple_wave", "fall_shake", "glitch_wave", "glitch_shake"):
             slow = LyricTimeline(doc, animation_style=style, entry_speed=50, exit_speed=50)
             fast = LyricTimeline(doc, animation_style=style, entry_speed=200, exit_speed=200)
             if style == "classic":

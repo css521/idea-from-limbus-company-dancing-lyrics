@@ -13,6 +13,7 @@ class GlyphState:
     scale: float = 1
     rotation: float = 0
     emphasis: float = 0
+    split: float = 0
 
 
 def smooth(value):
@@ -59,6 +60,7 @@ def glyph_states(glyphs, prefs, item, position_ms, energy, pixels, seed=0, angle
     seconds = position_ms / 1000
     amplitude = prefs.jump * (.35 + .65 * max(0., min(1., energy)))
     falling = prefs.animation_style.startswith("fall_")
+    glitch = prefs.animation_style.startswith("glitch_")
     shaking = prefs.animation_style.endswith("_shake")
     radians = math.radians(angle)
     result = []
@@ -84,17 +86,54 @@ def glyph_states(glyphs, prefs, item, position_ms, energy, pixels, seed=0, angle
             dy = amplitude * .4 * math.sin(seconds * 2 * math.pi * 1.5 - rank * .6)
         distance = prefs.fall_distance * pixels / 32 * leaving ** 2 if falling else 0
         rotation = (8 if noise_value(seed, rank, 2, 0) >= 0 else -8) * leaving ** 2 if falling else 0
+        split = 0.0
+
+        if glitch and prefs.jump > 0:
+            jump_ratio = min(1.0, prefs.jump / 10.0)
+            enter_dx = enter_rot = enter_split = 0.0
+            if entering < 1.0:
+                e_step = math.floor(seconds * 20)
+                e_jitter = noise_value(seed, rank, 3, e_step)
+                enter_dx = e_jitter * (1.0 - entering) * 8.0 * jump_ratio
+                enter_rot = e_jitter * (1.0 - entering) * 5.0 * jump_ratio
+                enter_split = (1.0 - entering) * (2.0 + 3.0 * abs(e_jitter)) * jump_ratio
+
+            leave_dx = leave_rot = leave_split = 0.0
+            if leaving > 0.0:
+                l_step = math.floor(seconds * 18)
+                l_jitter = noise_value(seed, rank, 4, l_step)
+                leave_dx = l_jitter * leaving * 10.0 * jump_ratio
+                leave_rot = l_jitter * leaving * 6.0 * jump_ratio
+                leave_split = leaving * 5.0 * jump_ratio
+
+            burst_clock = math.floor(seconds * 7)
+            burst_hash = noise_value(seed, 0, 7, burst_clock)
+            burst_thresh = 0.60 - 0.25 * max(0.0, min(1.0, energy))
+            if burst_hash > burst_thresh and entering >= 1.0 and leaving <= 0.0:
+                b_step = math.floor(seconds * 21)
+                b_jitter = noise_value(seed, rank, 8, b_step)
+                burst_dx = b_jitter * (3.5 + 4.5 * max(0.0, min(1.0, energy))) * jump_ratio
+                burst_rot = b_jitter * 3.5 * jump_ratio
+                burst_split = (1.5 + 2.5 * abs(b_jitter)) * jump_ratio
+            else:
+                burst_dx = burst_rot = 0.0
+                burst_split = (emphasis * 2.0) * jump_ratio if opacity > 0 else 0.0
+
+            dx += enter_dx + leave_dx + burst_dx
+            rotation += enter_rot + leave_rot + burst_rot
+            split = max(enter_split, leave_split, burst_split)
+
         # Convert screen-vertical fall to the tilted sentence's local coordinates.
         result.append(GlyphState(glyph.x + dx + math.sin(radians) * distance,
                                  glyph.baseline + dy + math.cos(radians) * distance,
                                  opacity, 1 + .08 * emphasis if opacity > 0 else 1, rotation,
-                                 emphasis if opacity > 0 else 0))
+                                 emphasis if opacity > 0 else 0, split))
         rank += 1
     return result
 
 
 def motion_bounds(ink, pixels, jump, style, angle=0, fall_distance=48, singing_sync=False):
-    """Conservative local bounds including rotation, shake and screen-vertical fall."""
+    """Conservative local bounds including rotation, shake, glitch and screen-vertical fall."""
     if style == "classic":
         scale = 1.04 * (1.08 if singing_sync else 1)
         scaled = ink.united(QRectF(ink.x() * scale, ink.y() * scale, ink.width() * scale, ink.height() * scale))
@@ -109,4 +148,6 @@ def motion_bounds(ink, pixels, jump, style, angle=0, fall_distance=48, singing_s
         distance = fall_distance * pixels / 32
         bounds = bounds.united(bounds.translated(math.sin(radians) * distance,
                                                 math.cos(radians) * distance))
+    elif style.startswith("glitch_"):
+        bounds = bounds.adjusted(-4, -2, 4, 2)
     return bounds.adjusted(-jump * .3 - 2, -jump * .5 - 2, jump * .3 + 2, jump * .5 + 2)
