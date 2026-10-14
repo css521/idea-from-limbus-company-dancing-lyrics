@@ -638,6 +638,38 @@ class MacPlatformTests(unittest.TestCase):
                 overlay.deleteLater()
                 player.stop()
 
+    def test_dante_pda_banner_triggers_on_track_change_and_renders(self):
+        from overlay import LyricsOverlay
+        from settings import Preferences
+        from PySide6.QtGui import QPainter, QImage
+        player = mac.MacNeteasePlayer(query=lambda: None, clock=lambda: 0, autostart=False)
+        prefs = Preferences(pda_banner=True)
+        overlay = LyricsOverlay(player, prefs)
+        try:
+            overlay.resize(800, 600)
+            self.assertFalse(overlay._is_pda_active())
+            # Track change
+            player.apply(info("Between Two Worlds", artist="Mili", duration=180000))
+            overlay._sync_timer()
+            self.assertTrue(overlay._is_pda_active())
+            self.assertEqual(overlay._pda_title, "Between Two Worlds")
+            self.assertEqual(overlay._pda_artist, "Mili")
+            # Render to image without crash
+            img = QImage(800, 600, QImage.Format.Format_ARGB32_Premultiplied)
+            img.fill(0)
+            painter = QPainter(img)
+            try:
+                overlay._draw_pda_banner(painter)
+            finally:
+                painter.end()
+            # Disable banner preference
+            prefs.pda_banner = False
+            self.assertFalse(overlay._is_pda_active())
+        finally:
+            overlay.close()
+            overlay.deleteLater()
+            player.stop()
+
     def test_entry_rejects_windows_and_help_does_not_start_qt(self):
         import main_mac
         with patch.object(main_mac.sys, "platform", "win32"):

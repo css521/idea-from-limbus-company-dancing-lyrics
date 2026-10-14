@@ -737,6 +737,10 @@ class ControlPanel(QWidget):
         self.translation_checkbox.setChecked(self.prefs.prefer_translation)
         self.translation_checkbox.setToolTip("逐句选择中文译文，无翻译时显示原文。译文按整句同步，不套用原文字词时间。")
         self.translation_checkbox.toggled.connect(lambda value: self._set_preference("prefer_translation", value))
+        self.pda_checkbox = QCheckBox("切歌时显示但丁 PDA 终端通知")
+        self.pda_checkbox.setChecked(getattr(self.prefs, "pda_banner", True))
+        self.pda_checkbox.setToolTip("切歌或歌曲变更时在屏幕顶部滑出边狱公司但丁 PDA 终端风格横幅，显示曲名与艺术家。")
+        self.pda_checkbox.toggled.connect(lambda value: self._set_preference("pda_banner", value))
         self._reload_fonts()
         self.font_combo.currentIndexChanged.connect(self._font_selected)
         for title, fields in (
@@ -744,7 +748,8 @@ class ControlPanel(QWidget):
                           ("发光风格", self.glow_variant),
                           ("文字大小", self.spins["font_size"]),
                           (self.color_label, self.color_button), ("发光强度", self.glow_field),
-                          ("歌词透明度", self.spins["opacity"]), ("歌词语言", self.translation_checkbox))),
+                          ("歌词透明度", self.spins["opacity"]), ("歌词语言", self.translation_checkbox),
+                          ("切歌通知", self.pda_checkbox))),
             ("律动与同步", (("歌词动画", self.animation_combo),
                           ("入场速度", self.parameter_fields["entry_speed"]), ("退场速度", self.parameter_fields["exit_speed"]),
                           ("抖动频率", self.parameter_fields["shake_frequency"]), ("跌落距离（32px 字号）", self.parameter_fields["fall_distance"]),
@@ -1072,7 +1077,7 @@ class ControlPanel(QWidget):
         self.glow_slider.setEnabled(glowing)
         self.glow_value.setText(f"{self.prefs.glow_strength}%")
         self.parameter_fields["shake_frequency"].setEnabled(self.prefs.animation_style.endswith("_shake"))
-        self.parameter_fields["fall_distance"].setEnabled(self.prefs.animation_style.startswith("fall_"))
+        self.parameter_fields["fall_distance"].setEnabled(self.prefs.animation_style.startswith("fall_") or self.prefs.animation_style.startswith("corrosion_"))
         self._refresh_word_status()
 
     def _refresh_word_status(self):
@@ -1101,7 +1106,7 @@ class ControlPanel(QWidget):
 
     def _sync_effect_widgets(self):
         widgets = [self.animation_combo, self.text_style, self.glow_variant, self.motion, self.font_combo, self.glow_slider,
-                   self.singing_checkbox, self.translation_checkbox, self.theme_combo,
+                   self.singing_checkbox, self.translation_checkbox, self.pda_checkbox, self.theme_combo,
                    *self.spins.values(), *self.parameter_sliders.values()]
         blockers = [QSignalBlocker(widget) for widget in widgets]
         for widget, key in ((self.animation_combo, "animation_style"), (self.text_style, "text_style"),
@@ -1114,6 +1119,7 @@ class ControlPanel(QWidget):
         self.glow_slider.setValue(self.prefs.glow_strength)
         self.singing_checkbox.setChecked(self.prefs.singing_sync)
         self.translation_checkbox.setChecked(self.prefs.prefer_translation)
+        self.pda_checkbox.setChecked(getattr(self.prefs, "pda_banner", True))
         self.theme_combo.setCurrentIndex(self.theme_combo.findData(self.prefs.theme))
         if self.styleSheet() != theme_stylesheet(self.prefs.theme):
             self._apply_theme()

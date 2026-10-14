@@ -2,6 +2,54 @@
 
 每次改动按日期追加记录，包含改动目的、涉及文件、测试与验证结果、影响或已知限制。
 
+## 2026-10-14：新增 E.G.O 侵蚀／金枝绽放歌词特效、脑叶公司危险等级预设及但丁 PDA 风格切歌浮窗
+
+### 改动
+
+- 新增边狱公司世界观专属歌词动画风格：**E.G.O 侵蚀 (E.G.O Corrosion)** 与 **金枝绽放 (Golden Bough Bloom)**：
+  1. 风格注册：在 `settings.py` 中注册 `corrosion_wave`（侵蚀·波动）、`corrosion_shake`（侵蚀·抖动）、`bloom_wave`（绽放·波动）、`bloom_shake`（绽放·抖动），支持设置持久化保存与无效值安全回退。动画风格总数扩充至 11 种。
+  2. 字符运动与色散：
+     - **E.G.O 侵蚀**：入场伴随精神下沉流动，退场呈现下渗流淌（受 `fall_distance` 驱动）与流体错位；在材质预备阶段预乘深渊漆黑（`#140a0f`）与暴戾深红（`#dc1e2d`）鬼影图层，在动态脉冲下产生强烈的失真与侵蚀色散。
+     - **金枝绽放**：入场温润自下微升展开（`enter_scale` 0.88 -> 1.0），退场升华微升（`leave_dy` < 0），光晕如金枝共振膨胀；材质预备暖日耀金（`#ffd700`）与温润琥珀（`#ff9b0a`）预乘图层。
+  3. 极限包围盒更新：在 `glyph_motion.py` 中为侵蚀下沉与金枝膨胀预留充足 bounds，保证在任意倾角与 DPR 下均无像素截断。
+- 新增脑叶公司危险等级（ZAYIN ~ ALEPH）全套内置预设 (`presets.py`)：
+  1. `ZAYIN · 绿意安定`：安定翠绿描边（`#27e8a7`）、轻快波浪、适中光晕；
+  2. `TETH · 冷青戒备`：警惕冷青描边（`#38bdf8`）、高频颤动、戒备光晕；
+  3. `HE · 金枝自制`：金枝绽放动画（`bloom_wave`）、耀日金描边（`#facc15`）、逐字演唱同步；
+  4. `WAW · 沉沦暗渊`：E.G.O 侵蚀抖动动画（`corrosion_shake`）、沉沦暗紫描边（`#c084fc`）、深渊下渗；
+  5. `ALEPH · 拟态灾厄`：异想体扭曲撕裂动画（`glitch_shake`）、灾厄血红描边（`#ef4444`）、高频脉冲震颤；
+  6. `卡门之声 · 阳光与血`：卡门阳光暖白字芯与琥珀金光晕（`#f2b772`）、猩红血色色散。
+  7. `EFFECT_KEYS` 排除 `pda_banner`，使预设切换不覆盖用户的全局切歌通知开关。
+- 新增**但丁 PDA 风格切歌浮窗** (Dante's PDA / LCB Banner Pill)：
+  1. 悬浮通知：在 `overlay.py` 中实现但丁 PDA 终端通知横幅，检测到切歌或曲目切换时平滑滑入，展示曲目名称、艺术家、终端元数据（`LCB // DANTE PDA · NOW PLAYING`）及金色共鸣细线。
+  2. 但丁时钟头矢量渲染：通过 `QSvgRenderer` 渲染高质量但丁燃烧时钟头图标（`assets/dante-clock.svg`），在异常环境优雅回退至罗马刻度盘。
+  3. 零句柄与完全穿透：直接在 `LyricsOverlay.paintEvent` 顶层绘制，无需创建独立操作系统窗口，天然享有 `WA_TransparentForMouseEvents`（完全点击穿透，不阻断鼠标）与 `WA_ShowWithoutActivating`（绝不抢占前台焦点）。
+  4. 播放联动与绝对冻结：切歌浮窗在音频活跃播放期间保持 33ms 动画刷新，展示 4.0 秒后平滑滑出退场；音频暂停时严格停止计时器并冻结画面，完全不产生额外 CPU 占用或状态偏差。
+- 控制面板联动与设置持久化 (`controls.py`)：
+  1. 在“显示与文字”设置分组中新增“切歌时显示但丁 PDA 终端通知”复选框（`pda_checkbox`），绑定 `prefs.pda_banner` 并支持持久化；
+  2. 动画控制项联动：选择 `corrosion_*` 风格时自动启用“跌落距离（流淌下渗）”滑块，选择 `*_shake` 时启用抖动频率调节。
+
+### 测试与验证
+
+- 自动化单元测试：
+  - 运行 `python -m unittest tests/test_core.py tests/test_workflow_docs.py tests/test_macos.py tests/test_glyph_motion.py tests/test_text_effects.py tests/test_singing_sync.py tests/test_effect_parameters.py tests/test_presets.py -v`：共 137 项核心与集成测试全部通过（OK，skipped=1）。
+  - 在 `tests/test_presets.py` 中测试全部 8 款内置预设（安静办公、轻快律动、ZAYIN ~ ALEPH 及卡门之声）的名称、色值与动画绑定，并验证 `pda_banner` 排除规则；
+  - 在 `tests/test_controls.py` 中测试 11 项完整动画选择，并新增 `test_pda_banner_toggle_and_overlay_activation` 验证复选框切换与持久化；
+  - 在 `tests/test_glyph_motion.py` 中新增 `test_corrosion_and_bloom_motion_and_split` 验证侵蚀与金枝动画的确定性、色散脉冲与平滑缩放；
+  - 在 `tests/test_text_effects.py` 中新增 `test_corrosion_and_bloom_chromatic_split_rendering` 验证侵蚀漆黑/暴戾深红与金枝耀金/琥珀的分色图层渲染；
+  - 在 `tests/test_macos.py` 中新增 `test_dante_pda_banner_triggers_on_track_change_and_renders` 验证切歌时浮窗激活、标题艺术家提取与 QPainter 绘制无异常。
+- 完整烟雾测试与性能基准：
+  - 运行 `python main.py --smoke`：全部指标通过（`passed: true`）：
+    - 11 种动画风格在 3024×1898 物理画布、DPR 2.0、51 字符双句下的暖帧 P95 渲染耗时均在 3.3ms ~ 10.9ms 之间，远优于 33ms 限制（`corrosion_wave`: 4.88ms, `corrosion_shake`: 6.83ms, `bloom_wave`: 3.93ms, `bloom_shake`: 3.77ms）；
+    - 暂停状态完全冻结（`all_animations_freeze_while_paused: true`, `pause_freezes_frame: true`）；
+    - 缓存与显存占用均严格控制在限额内。
+
+### 影响与限制
+
+- 动画列表现已提供 11 种风格，全面覆盖经典整句、波纹、跌落、扭曲、侵蚀与金枝绽放；
+- 脑叶危险等级预设可一键切换月亮门世界观氛围（从安定翠绿到拟态灾厄）；
+- 但丁 PDA 切歌浮窗在播放切歌时自动升起 4 秒，提供沉浸式终端体验，且不影响任何点击操作。
+
 ## 2026-10-14：新增边狱公司／月亮门世界观专属风格“扭曲·故障频闪 (Distortion / Glitch)”歌词动画特效
 
 ### 改动

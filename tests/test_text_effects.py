@@ -131,6 +131,29 @@ class TextEffectsTests(unittest.TestCase):
         self.assertGreater(right.alpha(), 0)
         self.assertGreater(right.red(), right.blue())
 
+    def test_corrosion_and_bloom_chromatic_split_rendering(self):
+        from glyph_motion import GlyphState
+        self.prefs.glow_strength = 0
+
+        # Corrosion: dark void left, blood red right
+        self.prefs.animation_style = "corrosion_wave"
+        surface = self.surface()
+        self.effects.render(surface, self.prefs, states=[GlyphState(0, 0, split=4.0)])
+        self.assertEqual(self.sample(surface, 10, 10), QColor("#ffffff"))
+        right = self.sample(surface, 23, 10)
+        self.assertGreater(right.alpha(), 0)
+        self.assertGreater(right.red(), right.blue())
+
+        # Bloom: sun gold left, warm amber right
+        self.prefs.animation_style = "bloom_wave"
+        surface = self.surface()
+        self.effects.render(surface, self.prefs, states=[GlyphState(0, 0, split=4.0)])
+        self.assertEqual(self.sample(surface, 10, 10), QColor("#ffffff"))
+        left = self.sample(surface, -3, 10)
+        self.assertGreater(left.alpha(), 0)
+        self.assertGreater(left.red(), 200)
+        self.assertGreater(left.green(), 150)
+
     def test_carmen_cache_and_thin_font_edges_at_fractional_scale(self):
         from text_effects import effect_palette
         self.prefs.glow_variant = "carmen"

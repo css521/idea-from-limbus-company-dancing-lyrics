@@ -7,7 +7,7 @@ import uuid
 from settings import Preferences, normalize_preferences
 from fonts import PRESET_FONTS
 
-EFFECT_KEYS = tuple(key for key in asdict(Preferences()) if key not in ("region", "delay_ms", "volume", "theme", "prefer_translation", "qq_cache_directory", "target_screen"))
+EFFECT_KEYS = tuple(key for key in asdict(Preferences()) if key not in ("region", "delay_ms", "volume", "theme", "prefer_translation", "qq_cache_directory", "target_screen", "pda_banner"))
 
 
 def effect_values(prefs):
@@ -27,6 +27,18 @@ BUILTINS = (
         glow_strength=30, opacity=60, motion="wave", jump=2, angle=3, entry_speed=80, exit_speed=80)), True),
     EffectPreset("builtin:lively", "轻快律动", effect_values(replace(Preferences(), color="#ff4080", opacity=80,
         animation_style="ripple_wave", jump=10, angle=8, entry_speed=140, exit_speed=140)), True),
+    EffectPreset("builtin:zayin", "ZAYIN · 绿意安定", effect_values(replace(Preferences(), color="#27e8a7", opacity=80,
+        animation_style="ripple_wave", jump=5, angle=3, glow_strength=50, entry_speed=90, exit_speed=90)), True),
+    EffectPreset("builtin:teth", "TETH · 冷青戒备", effect_values(replace(Preferences(), color="#38bdf8", opacity=85,
+        animation_style="ripple_shake", jump=8, angle=5, shake_frequency=6, glow_strength=60, entry_speed=110, exit_speed=110)), True),
+    EffectPreset("builtin:he", "HE · 金枝自制", effect_values(replace(Preferences(), color="#facc15", opacity=85,
+        animation_style="bloom_wave", jump=12, angle=6, glow_strength=75, singing_sync=True, entry_speed=120, exit_speed=120)), True),
+    EffectPreset("builtin:waw", "WAW · 沉沦暗渊", effect_values(replace(Preferences(), color="#c084fc", opacity=90,
+        animation_style="corrosion_shake", jump=15, angle=8, shake_frequency=8, fall_distance=48, glow_strength=80, singing_sync=True, entry_speed=130, exit_speed=130)), True),
+    EffectPreset("builtin:aleph", "ALEPH · 拟态灾厄", effect_values(replace(Preferences(), color="#ef4444", opacity=95,
+        animation_style="glitch_shake", jump=20, angle=12, shake_frequency=10, glow_strength=90, singing_sync=True, entry_speed=150, exit_speed=150)), True),
+    EffectPreset("builtin:carmen", "卡门之声 · 阳光与血", effect_values(replace(Preferences(), color="#f2b772", opacity=90,
+        glow_variant="carmen", animation_style="glitch_wave", jump=10, angle=5, glow_strength=85, singing_sync=True, entry_speed=110, exit_speed=110)), True),
 )
 
 

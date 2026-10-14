@@ -144,7 +144,10 @@ class TextEffects:
         A body knockout excludes neighbouring halos underneath fading white ink.
         """
         is_glitch = prefs.animation_style.startswith("glitch_")
-        key = (prefs.text_style, prefs.color, prefs.glow_strength, prefs.singing_sync, prefs.glow_variant, is_glitch)
+        is_corrosion = prefs.animation_style.startswith("corrosion_")
+        is_bloom = prefs.animation_style.startswith("bloom_")
+        style_kind = ("glitch" if is_glitch else ("corrosion" if is_corrosion else ("bloom" if is_bloom else "default")))
+        key = (prefs.text_style, prefs.color, prefs.glow_strength, prefs.singing_sync, prefs.glow_variant, style_kind)
         if surface.material_key == key:
             return surface.materials
         materials = []
@@ -201,13 +204,19 @@ class TextEffects:
                 pixels_view(halo)[body_pixels] = 0
 
             split_cyan, split_red = None, None
-            if is_glitch:
-                if prefs.glow_variant == "carmen":
-                    c_cyan = (255, 185, 60)   # Carmen Golden Amber
-                    c_red = (235, 45, 60)     # Carmine Blood Red
+            if is_glitch or is_corrosion or is_bloom:
+                if is_corrosion:
+                    c_cyan = (20, 10, 15)      # Abyss Void Shadow
+                    c_red = (220, 30, 45)      # Corrosion Blood Red
+                elif is_bloom:
+                    c_cyan = (255, 215, 0)     # Golden Bough Sun Gold
+                    c_red = (255, 155, 10)     # Warm Radiant Amber
+                elif prefs.glow_variant == "carmen":
+                    c_cyan = (255, 185, 60)    # Carmen Golden Amber
+                    c_red = (235, 45, 60)      # Carmine Blood Red
                 else:
-                    c_cyan = (0, 230, 255)    # Resonance Cyan
-                    c_red = (245, 50, 75)     # Distortion Crimson
+                    c_cyan = (0, 230, 255)     # Resonance Cyan
+                    c_red = (245, 50, 75)      # Distortion Crimson
                 body_alpha = pixels_view(body)[:, :, 3]
 
                 split_cyan = transparent_image(bounds, dpr)

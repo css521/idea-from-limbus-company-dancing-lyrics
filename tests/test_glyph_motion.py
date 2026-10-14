@@ -157,6 +157,16 @@ class CharacterMotionTests(unittest.TestCase):
         self.assertNotEqual(self.states(2000, "glitch_shake", jump=10),
                             self.states(2000, "glitch_wave", jump=10))
 
+    def test_corrosion_and_bloom_motion_and_split(self):
+        corrosion = self.states(1200, "corrosion_wave", jump=10, seed=42)
+        self.assertTrue(any(s.split > 0 for s in corrosion))
+        self.assertEqual(corrosion, self.states(1200, "corrosion_wave", jump=10, seed=42))
+
+        bloom = self.states(1200, "bloom_wave", jump=10, seed=42)
+        self.assertTrue(any(s.split > 0 for s in bloom))
+        self.assertEqual(bloom, self.states(1200, "bloom_wave", jump=10, seed=42))
+        self.assertTrue(any(s.scale > 1.0 for s in self.states(4200, "bloom_wave", jump=10)))
+
 
 class AnimatedDrawingTests(unittest.TestCase):
     def test_character_rgba_fade_keeps_white_core_and_applies_opacity_once(self):

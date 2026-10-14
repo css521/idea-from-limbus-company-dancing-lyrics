@@ -14,6 +14,8 @@ ANIMATION_STYLES = {
     "ripple_wave": "波纹·波动", "ripple_shake": "波纹·抖动",
     "fall_wave": "跌落·波动", "fall_shake": "跌落·抖动",
     "glitch_wave": "扭曲·波动", "glitch_shake": "扭曲·抖动",
+    "corrosion_wave": "侵蚀·波动", "corrosion_shake": "侵蚀·抖动",
+    "bloom_wave": "绽放·波动", "bloom_shake": "绽放·抖动",
 }
 
 
@@ -50,6 +52,7 @@ class Preferences:
     theme: str = "light"
     qq_cache_directory: str = ""
     target_screen: str = ""
+    pda_banner: bool = True
 
 
 class SettingsStore:
@@ -106,6 +109,8 @@ def normalize_preferences(prefs):
     prefs.target_screen = prefs.target_screen.strip()
     if len(prefs.target_screen) > 256 or any(c in prefs.target_screen for c in "\n\r\x00"):
         prefs.target_screen = ""
+    if not isinstance(getattr(prefs, "pda_banner", True), bool):
+        prefs.pda_banner = True
     if not prefs.font_family or len(prefs.font_family) > 256 or any(c in prefs.font_family for c in "\n\r\x00"):
         prefs.font_family = DEFAULT_FONT_FAMILY
     return prefs

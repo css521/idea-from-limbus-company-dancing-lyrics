@@ -1,11 +1,16 @@
 import random
 import sys
-from PySide6.QtCore import Qt, QTimer, QEvent
-from PySide6.QtGui import QPainter
+import time
+from PySide6.QtCore import Qt, QTimer, QEvent, QPointF, QRectF
+from PySide6.QtGui import QPainter, QColor, QPen, QLinearGradient, QFont, QFontMetrics
 from PySide6.QtWidgets import QApplication, QWidget
+try:
+    from PySide6.QtSvg import QSvgRenderer
+except ImportError:
+    QSvgRenderer = None
 from animation import build_layout, display_regions
 from lrc import LyricTimeline, LyricDocument, display_document
-from settings import Preferences
+from settings import Preferences, resource_path
 from text_effects import TEXT_EFFECTS
 from glyph_motion import glyph_states
 from app_info import APP_NAME
@@ -41,6 +46,20 @@ class LyricsOverlay(QWidget):
             app.screenAdded.connect(self._on_screens_changed)
             app.screenRemoved.connect(self._on_screens_changed)
         player.discontinuity.connect(self.clear_layouts)
+        self._current_track = ("", "")
+        self._pda_start = 0.0
+        self._pda_title = ""
+        self._pda_artist = ""
+        self._dante_svg = None
+        if QSvgRenderer is not None:
+            svg_path = resource_path("assets/dante-clock.svg")
+            if svg_path.is_file():
+                try:
+                    renderer = QSvgRenderer(str(svg_path))
+                    if renderer.isValid():
+                        self._dante_svg = renderer
+                except Exception:
+                    self._dante_svg = None
         self.timer = QTimer(self)
         self.timer.setTimerType(Qt.TimerType.PreciseTimer)
         self.timer.setInterval(33)
@@ -115,11 +134,45 @@ class LyricsOverlay(QWidget):
         self._protect_native_focus()
         self._sync_timer()
 
+    def _get_player_track(self):
+        title = getattr(self.player, "title", None)
+        artist = getattr(self.player, "artist", None)
+        if not title and getattr(self.player, "path", None):
+            title = self.player.path.stem
+        return (title or "").strip(), (artist or "").strip()
+
+    def _check_track_change(self):
+        if not getattr(self.prefs, "pda_banner", True):
+            return
+        title, artist = self._get_player_track()
+        if title and (title, artist) != self._current_track:
+            self._current_track = (title, artist)
+            self._pda_title = title
+            self._pda_artist = artist
+            self._pda_start = time.monotonic() if (getattr(self.player, "playing", False) and not getattr(self.player, "ended", False)) else 0.0
+
+    def _is_pda_active(self):
+        if not getattr(self.prefs, "pda_banner", True) or not self._pda_title:
+            return False
+        if not getattr(self.player, "playing", False) or getattr(self.player, "ended", False):
+            return False
+        if self._pda_start == 0.0:
+            return False
+        return (time.monotonic() - self._pda_start) < 4.0
+
     def _sync_timer(self):
-        if self.isVisible() and self.timeline and self.player.playing and not self.player.ended:
-            self.timer.start()
+        self._check_track_change()
+        if getattr(self.player, "playing", False) and not getattr(self.player, "ended", False) and self._pda_title and self._pda_start == 0.0:
+            self._pda_start = time.monotonic()
+        pda_active = self._is_pda_active()
+        music_active = bool(getattr(self.player, "playing", False) and not getattr(self.player, "ended", False))
+        has_content = bool(self.timeline or pda_active)
+        if self.isVisible() and music_active and has_content:
+            if not self.timer.isActive():
+                self.timer.start()
         else:
-            self.timer.stop()
+            if self.timer.isActive():
+                self.timer.stop()
         self.update()
 
     def _protect_native_focus(self):
@@ -153,6 +206,101 @@ class LyricsOverlay(QWidget):
             self.clear_layouts()
         return super().event(event)
 
+    def _draw_pda_banner(self, painter: QPainter):
+        if not self._is_pda_active():
+            return
+        elapsed = time.monotonic() - self._pda_start
+        if elapsed >= 4.0:
+            self._pda_title = ""
+            if self.timer.isActive() and not (self.timeline and self.player.playing and not self.player.ended):
+                self.timer.stop()
+            return
+
+        if elapsed < 0.35:
+            t = elapsed / 0.35
+            slide = 1.0 - (1.0 - t) ** 3
+            alpha = min(1.0, elapsed / 0.25)
+        elif elapsed < 3.2:
+            slide = 1.0
+            alpha = 1.0
+        else:
+            t = (elapsed - 3.2) / 0.8
+            slide = max(0.0, 1.0 - t * t)
+            alpha = max(0.0, 1.0 - t)
+
+        if alpha <= 0.0:
+            return
+
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setOpacity(alpha)
+
+        banner_w = 420.0
+        banner_h = 68.0
+        target_y = 22.0
+        current_y = (target_y + banner_h + 10.0) * slide - (banner_h + 10.0)
+        center_x = (self.width() - banner_w) / 2.0
+        banner_rect = QRectF(center_x, current_y, banner_w, banner_h)
+
+        bg_gradient = QLinearGradient(banner_rect.topLeft(), banner_rect.bottomLeft())
+        bg_gradient.setColorAt(0.0, QColor(24, 18, 22, 245))
+        bg_gradient.setColorAt(1.0, QColor(12, 10, 14, 248))
+        painter.setBrush(bg_gradient)
+        border_pen = QPen(QColor(220, 38, 48, 220), 1.5)
+        painter.setPen(border_pen)
+        painter.drawRoundedRect(banner_rect, 10.0, 10.0)
+
+        gold_pen = QPen(QColor(245, 185, 55, 230), 2.0)
+        painter.setPen(gold_pen)
+        gold_inset = 40.0
+        painter.drawLine(QPointF(banner_rect.left() + gold_inset, banner_rect.top() + 1.0),
+                         QPointF(banner_rect.right() - gold_inset, banner_rect.top() + 1.0))
+
+        icon_size = 46.0
+        icon_rect = QRectF(banner_rect.left() + 12.0, banner_rect.top() + 11.0, icon_size, icon_size)
+        painter.setPen(QPen(QColor(180, 25, 35, 140), 1.0))
+        painter.setBrush(QColor(32, 10, 14, 220))
+        painter.drawEllipse(icon_rect)
+        if self._dante_svg:
+            self._dante_svg.render(painter, icon_rect)
+        else:
+            painter.setPen(QPen(QColor(245, 185, 55), 1.5))
+            painter.drawText(icon_rect, Qt.AlignmentFlag.AlignCenter, "XII")
+
+        text_x = banner_rect.left() + 68.0
+        text_w = banner_w - 78.0
+
+        tag_font = QFont("Arial", 8)
+        tag_font.setBold(True)
+        tag_font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.2)
+        painter.setFont(tag_font)
+        painter.setPen(QColor(235, 65, 75, 235))
+        painter.drawText(QRectF(text_x, banner_rect.top() + 10.0, text_w, 14.0),
+                         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                         "LCB // DANTE PDA · NOW PLAYING")
+
+        title_font = QFont("Helvetica Neue", 12)
+        title_font.setBold(True)
+        painter.setFont(title_font)
+        painter.setPen(QColor(255, 255, 255, 255))
+        metrics_title = QFontMetrics(title_font)
+        elided_title = metrics_title.elidedText(self._pda_title, Qt.TextElideMode.ElideRight, int(text_w))
+        painter.drawText(QRectF(text_x, banner_rect.top() + 26.0, text_w, 20.0),
+                         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                         elided_title)
+
+        artist_text = self._pda_artist if self._pda_artist else "Limbus Company"
+        artist_font = QFont("Helvetica Neue", 9)
+        painter.setFont(artist_font)
+        painter.setPen(QColor(240, 185, 95, 220))
+        metrics_artist = QFontMetrics(artist_font)
+        elided_artist = metrics_artist.elidedText(artist_text, Qt.TextElideMode.ElideRight, int(text_w))
+        painter.drawText(QRectF(text_x, banner_rect.top() + 47.0, text_w, 15.0),
+                         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                         elided_artist)
+
+        painter.restore()
+
     def paintEvent(self, _event):
         painter = QPainter(self)
         # Explicitly erase the previous frame in the alpha surface.
@@ -160,6 +308,8 @@ class LyricsOverlay(QWidget):
         painter.fillRect(self.rect(), Qt.GlobalColor.transparent)
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
         if not self.timeline or self.player.ended:
+            if self._is_pda_active():
+                self._draw_pda_banner(painter)
             return
         position = self.player.position()
         active = self.timeline.visible(position, self.player.duration)
@@ -207,3 +357,5 @@ class LyricsOverlay(QWidget):
             painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
             painter.drawImage(layout.surface.origin, image)
             painter.restore()
+        if self._is_pda_active():
+            self._draw_pda_banner(painter)

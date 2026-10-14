@@ -5,7 +5,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
-from presets import PresetStore, EFFECT_KEYS
+from presets import PresetStore, EFFECT_KEYS, BUILTINS
 from settings import Preferences
 
 
@@ -20,11 +20,21 @@ class PresetTests(unittest.TestCase):
 
     def test_builtins_match_design_and_exclude_transport_region_and_offset(self):
         from fonts import PRESET_FONTS
-        quiet, lively = self.store.all()
+        from presets import BUILTINS
+        all_presets = self.store.all()
+        self.assertEqual(len(all_presets), len(BUILTINS))
+        quiet, lively = all_presets[0], all_presets[1]
         self.assertEqual((quiet.name, quiet.values["font_family"], quiet.values["entry_speed"]), ("安静办公", PRESET_FONTS[1][1], 80))
         self.assertEqual((lively.name, lively.values["animation_style"], lively.values["color"]), ("轻快律动", "ripple_wave", "#ff4080"))
         self.assertFalse(lively.values["singing_sync"])
-        self.assertTrue(set(EFFECT_KEYS).isdisjoint(("region", "delay_ms", "volume", "theme")))
+        zayin, teth, he, waw, aleph, carmen = all_presets[2:8]
+        self.assertEqual((zayin.name, zayin.values["color"]), ("ZAYIN · 绿意安定", "#27e8a7"))
+        self.assertEqual((teth.name, teth.values["color"]), ("TETH · 冷青戒备", "#38bdf8"))
+        self.assertEqual((he.name, he.values["animation_style"]), ("HE · 金枝自制", "bloom_wave"))
+        self.assertEqual((waw.name, waw.values["animation_style"]), ("WAW · 沉沦暗渊", "corrosion_shake"))
+        self.assertEqual((aleph.name, aleph.values["animation_style"]), ("ALEPH · 拟态灾厄", "glitch_shake"))
+        self.assertEqual((carmen.name, carmen.values["glow_variant"]), ("卡门之声 · 阳光与血", "carmen"))
+        self.assertTrue(set(EFFECT_KEYS).isdisjoint(("region", "delay_ms", "volume", "theme", "pda_banner")))
         with self.assertRaises(ValueError):
             self.store.delete(quiet.id)
         with self.assertRaises(ValueError):
@@ -57,7 +67,7 @@ class PresetTests(unittest.TestCase):
             self.path.write_bytes(raw)
             store = PresetStore(self.path)
             self.assertTrue(store.error)
-            self.assertEqual(len(store.all()), 2)
+            self.assertEqual(len(store.all()), len(BUILTINS))
             with self.assertRaises(ValueError):
                 store.save("新的", Preferences())
             self.assertEqual(self.path.read_bytes(), raw)

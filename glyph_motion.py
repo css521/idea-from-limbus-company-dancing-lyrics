@@ -59,8 +59,10 @@ def glyph_states(glyphs, prefs, item, position_ms, energy, pixels, seed=0, angle
     count, rank = len(visible), 0
     seconds = position_ms / 1000
     amplitude = prefs.jump * (.35 + .65 * max(0., min(1., energy)))
-    falling = prefs.animation_style.startswith("fall_")
+    falling = prefs.animation_style.startswith("fall_") or prefs.animation_style.startswith("corrosion_")
     glitch = prefs.animation_style.startswith("glitch_")
+    corrosion = prefs.animation_style.startswith("corrosion_")
+    bloom = prefs.animation_style.startswith("bloom_")
     shaking = prefs.animation_style.endswith("_shake")
     radians = math.radians(angle)
     result = []
@@ -84,9 +86,17 @@ def glyph_states(glyphs, prefs, item, position_ms, energy, pixels, seed=0, angle
         else:
             dx = 0
             dy = amplitude * .4 * math.sin(seconds * 2 * math.pi * 1.5 - rank * .6)
-        distance = prefs.fall_distance * pixels / 32 * leaving ** 2 if falling else 0
-        rotation = (8 if noise_value(seed, rank, 2, 0) >= 0 else -8) * leaving ** 2 if falling else 0
+        if corrosion:
+            distance = prefs.fall_distance * pixels / 32 * leaving ** 1.8 * 0.75
+            rotation = (8 if noise_value(seed, rank, 2, 0) >= 0 else -8) * leaving ** 1.8
+        elif falling:
+            distance = prefs.fall_distance * pixels / 32 * leaving ** 2
+            rotation = (8 if noise_value(seed, rank, 2, 0) >= 0 else -8) * leaving ** 2
+        else:
+            distance = 0
+            rotation = 0
         split = 0.0
+        scale = 1 + .08 * emphasis if opacity > 0 else 1
 
         if glitch and prefs.jump > 0:
             jump_ratio = min(1.0, prefs.jump / 10.0)
@@ -123,17 +133,50 @@ def glyph_states(glyphs, prefs, item, position_ms, energy, pixels, seed=0, angle
             rotation += enter_rot + leave_rot + burst_rot
             split = max(enter_split, leave_split, burst_split)
 
+        elif corrosion and prefs.jump > 0:
+            jump_ratio = min(1.0, prefs.jump / 10.0)
+            enter_split = leave_split = 0.0
+            if entering < 1.0:
+                enter_dy = (1.0 - entering) * 8.0 * jump_ratio
+                dy += enter_dy
+                enter_split = (1.0 - entering) * 2.0 * jump_ratio
+            if leaving > 0.0:
+                l_step = math.floor(seconds * 14)
+                leave_dx = noise_value(seed, rank, 13, l_step) * leaving * 5.0 * jump_ratio
+                dx += leave_dx
+                leave_split = leaving * 3.5 * jump_ratio
+            pulse = (emphasis * 2.0 + 0.5 * max(0.0, min(1.0, energy))) * jump_ratio if opacity > 0 else 0.0
+            split = max(enter_split, leave_split, pulse)
+
+        elif bloom:
+            enter_split = leave_split = 0.0
+            if prefs.jump > 0:
+                jump_ratio = min(1.0, prefs.jump / 10.0)
+                if entering < 1.0:
+                    enter_dy = (1.0 - entering) * -8.0 * jump_ratio
+                    dy += enter_dy
+                    enter_split = (1.0 - entering) * 2.0 * jump_ratio
+                if leaving > 0.0:
+                    leave_dy = -leaving * 12.0 * jump_ratio
+                    dy += leave_dy
+                    leave_split = leaving * 3.0 * jump_ratio
+                pulse = (emphasis * 2.5) * jump_ratio if opacity > 0 else 0.0
+                split = max(enter_split, leave_split, pulse)
+            enter_s = 0.88 + 0.12 * smooth(entering)
+            leave_s = 1.0 + 0.08 * smooth(leaving)
+            scale = enter_s * leave_s * (1 + .08 * emphasis if opacity > 0 else 1)
+
         # Convert screen-vertical fall to the tilted sentence's local coordinates.
         result.append(GlyphState(glyph.x + dx + math.sin(radians) * distance,
                                  glyph.baseline + dy + math.cos(radians) * distance,
-                                 opacity, 1 + .08 * emphasis if opacity > 0 else 1, rotation,
+                                 opacity, scale, rotation,
                                  emphasis if opacity > 0 else 0, split))
         rank += 1
     return result
 
 
 def motion_bounds(ink, pixels, jump, style, angle=0, fall_distance=48, singing_sync=False):
-    """Conservative local bounds including rotation, shake, glitch and screen-vertical fall."""
+    """Conservative local bounds including rotation, shake, glitch, corrosion, bloom and screen-vertical fall."""
     if style == "classic":
         scale = 1.04 * (1.08 if singing_sync else 1)
         scaled = ink.united(QRectF(ink.x() * scale, ink.y() * scale, ink.width() * scale, ink.height() * scale))
@@ -148,6 +191,19 @@ def motion_bounds(ink, pixels, jump, style, angle=0, fall_distance=48, singing_s
         distance = fall_distance * pixels / 32
         bounds = bounds.united(bounds.translated(math.sin(radians) * distance,
                                                 math.cos(radians) * distance))
+    elif style.startswith("corrosion_"):
+        for rotation in (-8, 8):
+            bounds = bounds.united(QTransform().rotate(rotation).mapRect(ink))
+        radians = math.radians(angle)
+        distance = fall_distance * pixels / 32 * 0.75
+        bounds = bounds.united(bounds.translated(math.sin(radians) * distance,
+                                                math.cos(radians) * distance))
+        bounds = bounds.adjusted(-4, -2, 4, 2)
+    elif style.startswith("bloom_"):
+        scale = 1.12 * (1.12 if singing_sync else 1.0)
+        scaled = ink.united(QRectF(ink.x() * scale, ink.y() * scale, ink.width() * scale, ink.height() * scale))
+        bounds = bounds.united(scaled.translated(0, -12 if jump > 0 else 0))
+        bounds = bounds.adjusted(-4, -4, 4, 4)
     elif style.startswith("glitch_"):
         bounds = bounds.adjusted(-4, -2, 4, 2)
     return bounds.adjusted(-jump * .3 - 2, -jump * .5 - 2, jump * .3 + 2, jump * .5 + 2)

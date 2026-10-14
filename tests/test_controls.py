@@ -562,7 +562,7 @@ class ControlPanelTests(unittest.TestCase):
         self.player.playing, self.player.clock = True, 6500
         self.click(self.panel.nav_buttons[1])
         self.assertEqual(self.panel.animation_combo.currentData(), "classic")
-        self.assertEqual(self.panel.animation_combo.count(), 7)
+        self.assertEqual(self.panel.animation_combo.count(), len(ANIMATION_STYLES))
         for style in ANIMATION_STYLES:
             self.panel.animation_combo.setCurrentIndex(self.panel.animation_combo.findData(style))
             self.assertEqual(self.store.load().animation_style, style)
@@ -779,6 +779,14 @@ class ControlPanelTests(unittest.TestCase):
         self.player.disconnect()
         self.assertIsNone(self.overlay.document)
         self.assertIn("断开", self.panel.notice.text())
+
+    def test_pda_banner_toggle_and_overlay_activation(self):
+        self.click(self.panel.nav_buttons[1])
+        self.assertTrue(self.panel.pda_checkbox.isChecked())
+        self.panel.pda_checkbox.setChecked(False)
+        self.assertFalse(self.store.load().pda_banner)
+        self.panel.pda_checkbox.setChecked(True)
+        self.assertTrue(self.store.load().pda_banner)
 
 
 if __name__ == "__main__":
