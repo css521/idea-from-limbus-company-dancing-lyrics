@@ -129,6 +129,57 @@ class QQParsingTests(unittest.TestCase):
             with self.assertRaises((ValueError, UnicodeError)):
                 lyrics.parse_lyrics(data)
 
+    def test_parse_qrc_lyrics_with_word_timings_and_translations(self):
+        from qqmusic_qrc import _unmask
+        from lrc import TimedWord
+        golden = json.loads((ROOT / "tests/fixtures/qq-cache-synthetic.json").read_text(encoding="utf-8"))["samples"]
+        raw = bytes.fromhex(golden["qrc"]["hex"])
+        newline = _unmask(raw[:64]).find(b"\n")
+        qrc_hex = _unmask(raw)[newline + 1:].hex()
+
+        t_raw = bytes.fromhex(golden["translation"]["hex"])
+        t_newline = _unmask(t_raw[:64]).find(b"\n")
+        trans_hex = _unmask(t_raw)[t_newline + 1:].hex()
+
+        doc = lyrics.parse_qrc_lyrics({"qrc": 1, "lyric": qrc_hex, "trans": trans_hex})
+        self.assertIsNotNone(doc)
+        self.assertEqual(len(doc.lines), 3)
+        self.assertEqual(doc.lines[0].text, "你好")
+        self.assertEqual(doc.lines[0].translation, "你好译文")
+        self.assertEqual(doc.lines[0].words, (TimedWord(0, 400, 0, 1), TimedWord(400, 900, 1, 2)))
+        self.assertEqual(doc.lines[1].text, "Hello é🙂")
+        self.assertEqual(doc.lines[1].translation, "英文译文")
+        self.assertEqual(len(doc.lines[1].words), 2)
+
+    def test_fetch_qq_lyrics_prefers_qrc_and_falls_back_to_lrc(self):
+        from qqmusic_qrc import _unmask
+        golden = json.loads((ROOT / "tests/fixtures/qq-cache-synthetic.json").read_text(encoding="utf-8"))["samples"]
+        raw = bytes.fromhex(golden["qrc"]["hex"])
+        newline = _unmask(raw[:64]).find(b"\n")
+        qrc_hex = _unmask(raw)[newline + 1:].hex()
+
+        # 1. 当 req_qrc 成功返回逐字歌词时，优先使用逐字 QRC
+        response_with_qrc = {
+            "req_qrc": {"code": 0, "data": {"qrc": 1, "lyric": qrc_hex}},
+            "req_0": {"code": 0, "data": {"lyric": encode("[00:01]Fallback Plain LRC")}}
+        }
+        with patch.object(lyrics, "request_json", return_value=response_with_qrc):
+            doc = lyrics.fetch_qq_lyrics("000aUmSX0YNqVF")
+            self.assertIsNotNone(doc)
+            self.assertEqual(doc.lines[0].text, "你好")
+            self.assertTrue(bool(doc.lines[0].words))
+
+        # 2. 当 req_qrc 无逐字数据时，自动回退到 req_0 的普通整句 LRC
+        response_without_qrc = {
+            "req_qrc": {"code": 0, "data": {"qrc": 0, "lyric": ""}},
+            "req_0": {"code": 0, "data": {"crypt": 0, "qrc": 0, "lyric": encode("[00:01]Fallback Plain LRC")}}
+        }
+        with patch.object(lyrics, "request_json", return_value=response_without_qrc):
+            doc = lyrics.fetch_qq_lyrics("000aUmSX0YNqVF")
+            self.assertIsNotNone(doc)
+            self.assertEqual(doc.lines[0].text, "Fallback Plain LRC")
+            self.assertEqual(doc.lines[0].words, ())
+
     def test_search_and_lyric_requests_are_anonymous_and_bounded(self):
         snapshot = parse_snapshot(packet(state="Paused"))
         search = {lyrics.SEARCH_MODULE:{"code":0,"data":{"body":{"song":{"list":[song()]}}}}}

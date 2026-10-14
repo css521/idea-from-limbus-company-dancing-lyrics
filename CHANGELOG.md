@@ -2,6 +2,44 @@
 
 每次改动按日期追加记录，包含改动目的、涉及文件、测试与验证结果、影响或已知限制。
 
+## 2026-10-14：支持 QQ 音乐在线 QRC 逐字歌词展示与暂停检测停滞判定增强
+
+### 改动
+
+- 支持 QQ 音乐逐字歌词（Word-by-word timing / QRC）在线获取与动画渲染：
+  1. 根因与背景：先前 QQ 音乐逐字时间仅依赖 Windows 本地磁盘缓存（`QQMusicLyricNew/*.qrc`），而 macOS QQ 音乐沙盒限制且不落盘散列 QRC 缓存文件，网络请求仅获取整句 LRC，导致 QQ 音乐在 macOS 及无本地缓存的 Windows 环境下无法开启逐字动画。
+  2. 实现方案：
+     - 在 `qqmusic_lyrics.py` 中引入 Triple-DES 解密与 zlib 流式安全解压 `_decompress_qrc`，实现 `parse_qrc_lyrics`；
+     - 在 `musicu.fcg` 请求中以单次往返批量请求 `req_qrc`（`qrc: 1, crypt: 1, trans: 1`）与 `req_0`（`qrc: 0, crypt: 0, trans: 1`），网络零额外耗时；
+     - 优先解密并解析官方 QRC 歌词，生成包含字词级时间戳（`TimedWord`）的 `LyricDocument`，并支持加密译文与 base64 译文自动对齐；
+     - 当歌曲无 QRC 时无缝回退至标准 LRC，并兼容 `fcg_query_lyric_new.fcg` 接口；
+     - 控制面板“歌曲逐字时间”状态即时反映“逐字时间可用”，桌面歌词自动呈现逐字高光与演唱律动效果；
+     - 更新 `macos_netease.py` 中的 `_fetch_qq_lyrics_by_mid` 统一复用 `fetch_qq_lyrics`，确保合唱及精选集歌曲亦享受逐字歌词。
+- 修复 QQ 音乐在蓝牙耳机挂载等系统音频常开场景下暂停无法识别问题：
+  1. 根因：QQ 音乐 Mac 客户端暂停时未将系统的 `kMRMediaRemoteNowPlayingInfoPlaybackRate` 设为 0（保持 1.0），且在挂载蓝牙耳机或有其他系统音频发声时，CoreAudio 全局音频输出状态持续为 True；
+  2. 解决方案：在 `macos_netease.py` 中增加停滞漂移检测：当音频状态活跃但采样位置连续停滞超过 1.8 秒且本地虚拟时钟推移超过 1.2 秒时，判定为暂停（`playing = False`），冻结歌词动画与进度；当采样位置再次前进时立即恢复播放。
+- 更新 `QQMUSIC.md` 说明网络与本地缓存 QRC 双通道支持。
+
+### 测试与验证
+
+- 自动化单元测试：
+  - 在 `tests/test_qqmusic.py` 中新增 `test_parse_qrc_lyrics_with_word_timings_and_translations` 与 `test_fetch_qq_lyrics_prefers_qrc_and_falls_back_to_lrc`，验证 QRC 解密解析、字级区间提取、译文合并与无逐字回退；
+  - 在 `tests/test_macos.py` 中新增 `test_qqmusic_pause_with_active_audio_and_rate_one_detects_pause_by_position_stall` 与 `test_macos_qqmusic_loads_qrc_word_timings_via_network`，覆盖蓝牙耳机场景暂停识别与 macOS QQ 音乐逐字歌词加载；
+  - 运行 `python -m unittest tests/test_core.py tests/test_workflow_docs.py tests/test_macos.py tests/test_qqmusic.py tests/test_qqmusic_cache.py tests/test_mac_distribution.py`：149 项测试全部通过（OK）。
+- 真实网络检索与解密实测：
+  - 周杰伦《等你下课》：57 句全部携带逐字字词时间；
+  - 周杰伦《晴天》：63 句全部携带逐字字词时间；
+  - Mili《Iron Lotus》：63 句逐字歌词，61 句中文译文精确对齐；
+  - YOASOBI《夜に駆ける》：69 句全部携带逐字字词时间。
+- 发布包构建与审计：
+  - 执行 `./.venv/bin/python tools/build_macos.py --output-dir artifacts/mac-release`，成功生成应用与归档文件。
+
+### 影响与限制
+
+- QQ 音乐在 macOS 与 Windows 上均支持在线获取官方逐字歌词，无需手动指定缓存目录；
+- 若个别歌曲官方未提供逐字数据，自动回退到整句 LRC 动画；
+- 维持既有只读安全原则，不向 QQ 音乐发送控制命令。
+
 ## 2026-10-13：修复 QQ 音乐频繁获取失败（错误码 2001）与自动切歌歌词不重新加载问题
 
 ### 改动

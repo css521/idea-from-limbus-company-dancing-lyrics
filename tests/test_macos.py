@@ -402,6 +402,44 @@ class MacPlayerTests(unittest.TestCase):
         finally:
             player.stop()
 
+    def test_qqmusic_pause_with_active_audio_and_rate_one_detects_pause_by_position_stall(self):
+        # 即使 CoreAudio 活跃（如蓝牙耳机挂载）且 QQ 音乐未将 rate 置 0，位置停滞时亦能准确识别暂停
+        clock_time = [10.0]
+        player = mac.MacNeteasePlayer(autostart=False, clock=lambda: clock_time[0], query=lambda: None, audio_running=lambda *_: True)
+        try:
+            # 起播在 146000 (02:26)
+            snap = mac.NowPlaying("playing", "Love You", "Selena", 188000, 146000, rate=1.0, bundle="com.tencent.QQMusicMac")
+            player.apply(snap, captured=10.0)
+            self.assertTrue(player.playing)
+            self.assertEqual(player.position(), 146000)
+
+            # 0.5s 后，QQ 音乐尚未上报新秒数，允许平滑推移
+            clock_time[0] = 10.5
+            player.apply(snap, captured=10.5)
+            self.assertTrue(player.playing)
+            self.assertEqual(player.position(), 146500)
+
+            # 用户在 QQ 音乐中按下暂停（位置停滞在 146000），2.0s 后漂移超 1.2s，必须识别为暂停
+            clock_time[0] = 12.0
+            player.apply(snap, captured=12.0)
+            self.assertFalse(player.playing)
+            paused_pos = player.position()
+
+            # 之后继续流逝 3s，位置不再累加，保持完全冻结
+            clock_time[0] = 15.0
+            player.apply(snap, captured=15.0)
+            self.assertFalse(player.playing)
+            self.assertEqual(player.position(), paused_pos)
+
+            # 恢复播放（位置前进到 147000）
+            clock_time[0] = 15.5
+            resumed_snap = mac.NowPlaying("playing", "Love You", "Selena", 188000, 147000, rate=1.0, bundle="com.tencent.QQMusicMac")
+            player.apply(resumed_snap, captured=15.5)
+            self.assertTrue(player.playing)
+            self.assertEqual(player.position(), 147000)
+        finally:
+            player.stop()
+
     def test_mac_coreaudio_detection(self):
         # 验证 CoreAudio 检测在各种边界条件下返回有效布尔或 None，且不抛出异常
         self.assertIsNone(mac.is_mac_bundle_audio_running(None))
@@ -697,6 +735,27 @@ class MacPlatformTests(unittest.TestCase):
         if os.name == "nt":
             result = subprocess.run([bash, str(ROOT / "安装.sh")], capture_output=True, text=True, encoding="utf-8")
             self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+
+    def test_macos_qqmusic_loads_qrc_word_timings_via_network(self):
+        # 验证 macOS 下 QQ 音乐能通过网络直接获取 QRC 逐字歌词并在控制面板展示逐字时间可用
+        from qqmusic_qrc import _unmask
+        golden = json.loads((ROOT / "tests/fixtures/qq-cache-synthetic.json").read_text(encoding="utf-8"))["samples"]
+        raw = bytes.fromhex(golden["qrc"]["hex"])
+        newline = _unmask(raw[:64]).find(b"\n")
+        qrc_hex = _unmask(raw)[newline + 1:].hex()
+
+        response = {
+            "req_qrc": {"code": 0, "data": {"qrc": 1, "lyric": qrc_hex}},
+            "req_0": {"code": 0, "data": {"lyric": ""}}
+        }
+        info = mac.NowPlaying("playing", "你好", "歌手", 180000, 5000, bundle="com.tencent.QQMusicMac")
+        with patch("qqmusic_lyrics._search_song", return_value={"mid": "000aUmSX0YNqVF", "id": 123}), \
+             patch("qqmusic_lyrics.request_json", return_value=response):
+            result = mac.load_qqmusic_lyrics(info)
+            self.assertIsNotNone(result.document)
+            self.assertEqual(result.document.lines[0].text, "你好")
+            self.assertTrue(bool(result.document.lines[0].words))
+            self.assertEqual(word_timing_status(result.document), "逐字时间可用")
 
 
 if __name__ == "__main__":

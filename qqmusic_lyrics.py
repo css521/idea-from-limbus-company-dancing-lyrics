@@ -11,8 +11,12 @@ import unicodedata
 import urllib.parse
 import urllib.request
 
+import zlib
+
 from lrc import LyricDocument, parse_lrc, chinese_translation
+from qqmusic_des import decrypt_blocks
 from qqmusic_http import discard_connection, lyric_connection, open_request
+from qqmusic_qrc import MAX_ENCRYPTED, MAX_TEXT, parse_qrc
 
 MAX_BYTES = 2 * 1024 * 1024
 SEARCH_MODULE = "music.search.SearchCgiService"
@@ -123,6 +127,63 @@ def parse_lyrics(data, encoded=True):
     return LyricDocument(lines, document.warnings, document.offset_ms)
 
 
+def _decompress_qrc(plain):
+    inflater = zlib.decompressobj()
+    try:
+        decomp = inflater.decompress(plain, MAX_TEXT + 1)
+    except zlib.error as error:
+        raise ValueError("QQ 歌词解压失败") from error
+    if len(decomp) > MAX_TEXT or inflater.unconsumed_tail or not inflater.eof:
+        raise ValueError("QQ 歌词内容过大或不完整")
+    return decomp.decode("utf-8-sig", errors="strict")
+
+
+def parse_qrc_lyrics(data, fallback_trans="", cancelled=lambda: False):
+    if not isinstance(data, dict) or data.get("qrc") != 1:
+        return None
+    lyric_hex = data.get("lyric", "")
+    if not isinstance(lyric_hex, str) or not lyric_hex.strip():
+        return None
+    try:
+        raw = bytes.fromhex(lyric_hex)
+    except ValueError:
+        return None
+    if not (0 < len(raw) <= MAX_ENCRYPTED):
+        return None
+    dec = decrypt_blocks(raw, cancelled=cancelled)
+    text = _decompress_qrc(dec)
+    document = parse_qrc(text)
+    if document is None:
+        return None
+
+    trans_doc = None
+    trans_hex = data.get("trans", "")
+    if isinstance(trans_hex, str) and trans_hex.strip():
+        try:
+            t_raw = bytes.fromhex(trans_hex)
+            t_dec = decrypt_blocks(t_raw, cancelled=cancelled)
+            trans_doc = parse_lrc(_decompress_qrc(t_dec))
+        except (ValueError, zlib.error, UnicodeError):
+            pass
+    if trans_doc is None and isinstance(fallback_trans, str) and fallback_trans.strip():
+        try:
+            trans_doc = parse_lrc(_decode(fallback_trans, encoded=True))
+        except (ValueError, UnicodeError):
+            pass
+
+    if trans_doc is not None:
+        by_time = {line.start_ms + trans_doc.offset_ms: line.text for line in trans_doc.lines
+                   if chinese_translation(line.text)}
+        lines = []
+        for line in document.lines:
+            candidates = [value for stamp, value in by_time.items()
+                          if abs(stamp - line.start_ms - document.offset_ms) <= 250]
+            lines.append(replace(line, translation=candidates[0]) if len(candidates) == 1 and line.text else line)
+        document = LyricDocument(lines, document.warnings, document.offset_ms)
+
+    return document
+
+
 def _checkpoint(cancelled):
     if cancelled():
         raise CancelledError()
@@ -176,26 +237,47 @@ def load_song_lyrics(snapshot, *, cancelled=lambda: False):
         return _load_song_lyrics(snapshot, cancelled)
 
 
+def fetch_qq_lyrics(mid, song_id=0, cancelled=lambda: False):
+    document = None
+    try:
+        data = request_json("https://u.y.qq.com/cgi-bin/musicu.fcg", {
+            "comm": {"ct": 24, "cv": 0},
+            "req_qrc": {
+                "module": "music.musichallSong.PlayLyricInfo", "method": "GetPlayLyricInfo",
+                "param": {"songMID": mid, "songID": song_id, "qrc": 1, "crypt": 1,
+                          "roma": 0, "trans": 1}},
+            "req_0": {
+                "module": "music.musichallSong.PlayLyricInfo", "method": "GetPlayLyricInfo",
+                "param": {"songMID": mid, "songID": song_id, "qrc": 0, "crypt": 0,
+                          "roma": 0, "trans": 1}}})
+        try:
+            fallback_trans = (data.get("req_0", {}).get("data", {}).get("trans", "")
+                              if isinstance(data.get("req_0"), dict) else "")
+            qrc_data = (data.get("req_qrc", {}).get("data")
+                        if isinstance(data.get("req_qrc"), dict) else None)
+            document = parse_qrc_lyrics(qrc_data, fallback_trans=fallback_trans, cancelled=cancelled)
+        except Exception:
+            document = None
+        if document is None:
+            part = data.get("req_0", {})
+            if isinstance(part, dict) and part.get("code") == 0:
+                document = parse_lyrics(part.get("data"))
+            elif "lyric" in data:
+                document = parse_lyrics(data)
+    except (OSError, ValueError, UnicodeError):
+        _checkpoint(cancelled)
+        url = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?" + urllib.parse.urlencode(
+            {"songmid": mid, "format": "json", "nobase64": 1})
+        document = parse_lyrics(request_json(url), encoded=False)
+    return document
+
+
 def _load_song_lyrics(snapshot, cancelled):
     song = _search_song(snapshot, cancelled)
     _checkpoint(cancelled)
     if song is None:
         return LyricResult(None, "未找到可靠匹配的 QQ 音乐歌词，可点击“重新获取歌词”重试。")
     mid = song["mid"]
-    try:
-        data = request_json("https://u.y.qq.com/cgi-bin/musicu.fcg", {
-            "comm": {"ct": 24, "cv": 0}, "req_0": {
-                "module": "music.musichallSong.PlayLyricInfo", "method": "GetPlayLyricInfo",
-                "param": {"songMID": mid, "songID": song.get("id", 0), "qrc": 0, "crypt": 0,
-                          "roma": 0, "trans": 1}}})
-        part = data.get("req_0", {})
-        if not isinstance(part, dict) or part.get("code") != 0:
-            raise ValueError("QQ 音乐歌词接口暂不可用")
-        document = parse_lyrics(part.get("data"))
-    except (OSError, ValueError, UnicodeError):
-        _checkpoint(cancelled)
-        url = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg?" + urllib.parse.urlencode(
-            {"songmid": mid, "format": "json", "nobase64": 1})
-        document = parse_lyrics(request_json(url), encoded=False)
+    document = fetch_qq_lyrics(mid, song.get("id", 0), cancelled=cancelled)
     message = f"QQ 音乐歌词已同步 · {len(document.lines)} 句" if document else "本曲暂无歌词或为纯音乐，桌面保持空白。"
     return LyricResult(document, message, mid)
