@@ -605,6 +605,7 @@ class ControlPanel(QWidget):
         self.preset_update_button.clicked.connect(self.update_preset)
         self.preset_delete_button.clicked.connect(self.delete_preset)
         for button in (self.preset_save_button, self.preset_update_button, self.preset_delete_button):
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             preset_actions.addWidget(button)
         preset_body.addLayout(preset_actions)
         self.preset_status = label("内置方案只读；可另存为自己的方案。", "muted")
@@ -679,6 +680,7 @@ class ControlPanel(QWidget):
             self.spins[name] = spin
             self.parameter_fields[name], self.parameter_sliders[name] = field, slider
         self.color_button = QPushButton()
+        self.color_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.color_button.clicked.connect(self.choose_color)
         self._update_color_button()
         self.text_style = QComboBox()
@@ -714,12 +716,14 @@ class ControlPanel(QWidget):
         self.font_combo.setMinimumWidth(100)
         self.font_combo.setAccessibleName("歌词字体")
         self.import_font_button = QPushButton("导入字体")
+        self.import_font_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.import_font_button.setToolTip("导入 TTF、OTF 或 TTC 字体；字体会保存到程序设置目录。")
         self.import_font_button.clicked.connect(lambda: self.import_font())
         font_row.addWidget(self.font_combo, 1)
         font_row.addWidget(self.import_font_button)
         self.font_preview = FontPreview(self.prefs)
         self.replay_button = QPushButton("重播动画")
+        self.replay_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.replay_button.setToolTip("循环预览入场、停留和退场，不改变音乐播放。")
         self.replay_button.clicked.connect(self.font_preview.replay)
         self.preview_background = QComboBox()
@@ -841,6 +845,7 @@ class ControlPanel(QWidget):
         control_body.setSpacing(12)
         control_body.addStretch(1)
         self.visibility_button = QPushButton("隐藏歌词")
+        self.visibility_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.visibility_button.setObjectName("visibility")
         self.visibility_button.setIcon(symbol_icon("lyrics"))
         self.visibility_button.clicked.connect(self.toggle_overlay)

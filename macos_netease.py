@@ -104,7 +104,39 @@ def _finite(value, maximum):
     return result
 
 
-def parse_nowplaying(data, allowed_bundles=None):
+def get_mac_qqmusic_playback_state():
+    if sys.platform != "darwin":
+        return None
+    try:
+        cmd = [
+            "osascript", "-e",
+            'tell application "System Events"\n'
+            '  tell process "QQMusic"\n'
+            '    try\n'
+            '      tell menu bar 1\n'
+            '        repeat with mi in menu bar items\n'
+            '          if name of mi is in {"播放控制", "Controls", "Control"} then\n'
+            '            return name of menu item 1 of menu 1 of mi\n'
+            '          end if\n'
+            '        end repeat\n'
+            '      end tell\n'
+            '    end try\n'
+            '  end tell\n'
+            'end tell'
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=0.8)
+        if res.returncode == 0:
+            name = res.stdout.strip()
+            if name in ("暂停", "Pause"):
+                return True
+            elif name in ("播放", "Play"):
+                return False
+    except Exception:
+        pass
+    return None
+
+
+def parse_nowplaying(data, allowed_bundles=None, qqmusic_state_func=None):
     if not isinstance(data, dict):
         return None
     bundle = (data.get("bundleIdentifier")
@@ -124,19 +156,26 @@ def parse_nowplaying(data, allowed_bundles=None):
     duration = int(_finite(data.get("kMRMediaRemoteNowPlayingInfoDuration"), 86400) * 1000)
     position = int(_finite(data.get("kMRMediaRemoteNowPlayingInfoElapsedTime"), 86400) * 1000)
     rate = _finite(data.get("kMRMediaRemoteNowPlayingInfoPlaybackRate"), 4)
-    return NowPlaying("playing" if rate > 0 else "paused", title.strip(), artist.strip(),
+    state = "playing" if rate > 0 else "paused"
+    if bundle in QQMUSIC_BUNDLES and qqmusic_state_func is not None:
+        menu_state = qqmusic_state_func()
+        if menu_state is not None:
+            state = "playing" if menu_state else "paused"
+            rate = 1.0 if menu_state else 0.0
+    return NowPlaying(state, title.strip(), artist.strip(),
                       duration, min(position, duration) if duration else position, rate=rate,
                       album=str(album).strip(), bundle=str(bundle or ""))
 
 
-def query_nowplaying(cli, allowed_bundles=None):
+def query_nowplaying(cli, allowed_bundles=None, qqmusic_state_func=get_mac_qqmusic_playback_state):
     if not cli:
         return None
     result = subprocess.run([cli, "get-raw"], capture_output=True, text=True, encoding="utf-8",
                             timeout=2, check=True)
     if not result.stdout.strip() or result.stdout.strip() == "null":
         return None
-    return parse_nowplaying(json.loads(result.stdout), allowed_bundles=allowed_bundles)
+    return parse_nowplaying(json.loads(result.stdout), allowed_bundles=allowed_bundles,
+                           qqmusic_state_func=qqmusic_state_func)
 
 
 def is_mac_bundle_audio_running(target_bundle):
@@ -452,7 +491,7 @@ class MacNeteasePlayer(QObject):
 
     def __init__(self, parent=None, *, query=None, loader=load_song_lyrics, clock=time.monotonic,
                  executor=None, autostart=True, source_mode="auto", cache_directory="", cache_reader=None,
-                 audio_running=None):
+                 audio_running=None, qqmusic_state=None):
         super().__init__(parent)
         self.cli = find_nowplaying_cli() if query is None else None
         self.source_mode = source_mode
@@ -463,7 +502,9 @@ class MacNeteasePlayer(QObject):
         elif source_mode == "netease":
             allowed = NETEASE_BUNDLES
         self._allowed_bundles = allowed
-        self._query = query or (lambda: query_nowplaying(self.cli, allowed_bundles=self._allowed_bundles))
+        self._qqmusic_state = qqmusic_state or get_mac_qqmusic_playback_state
+        self._query = query or (lambda: query_nowplaying(self.cli, allowed_bundles=self._allowed_bundles,
+                                                        qqmusic_state_func=self._qqmusic_state))
         self._loader, self._clock = loader, clock
         self._custom_loader = loader is not load_song_lyrics
         self._executor = executor or ThreadPoolExecutor(max_workers=2, thread_name_prefix="mac-lyrics")

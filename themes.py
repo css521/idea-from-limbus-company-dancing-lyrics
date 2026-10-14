@@ -43,10 +43,10 @@ QLabel#footerSong { font-size: 16px; }
 QLabel#badge { background: $sidebar; color: $muted; border-radius: 12px; padding: 4px 12px; font-size: 12px; }
 QLabel#notice { background: $notice; color: $notice_text; border: 1px solid $notice_border; border-radius: 8px; padding: 10px 14px; }
 QFrame#card, QFrame#songRow { background: $surface; border: 1px solid $border; border-radius: 14px; }
-QPushButton { background: $surface; border: 1px solid $border; border-radius: 10px; padding: 10px 16px; }
+QPushButton { background: $surface; border: 1px solid $border; border-radius: 10px; padding: 10px 16px; outline: none; }
 QPushButton:hover { background: $hover; border-color: $muted; }
 QPushButton:pressed { background: $pressed; }
-QPushButton:focus { border: 1px solid #ff3656; }
+QPushButton:focus { outline: none; }
 QPushButton:disabled { color: $disabled; background: $disabled_surface; border-color: $border; }
 QPushButton#primary { background: #ff3656; color: #ffffff; border: 1px solid #ff3656; font-weight: 600; }
 QPushButton#primary:hover { background: #f42648; }
@@ -112,6 +112,7 @@ def theme_stylesheet(name):
     QPushButton#nav:checked:hover { background: #503717; }
     QPushButton#primary { color: #21170b; }
     QCheckBox::indicator { border-radius: 2px; }
+    QPushButton:focus { outline: none; }
     """
 
 

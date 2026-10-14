@@ -2,6 +2,35 @@
 
 每次改动按日期追加记录，包含改动目的、涉及文件、测试与验证结果、影响或已知限制。
 
+## 2026-10-14：修复按钮点击高亮圆框问题与 QQ 音乐暂停 6 秒延迟问题
+
+### 改动
+
+- 修复按钮点击后显示高亮圆框问题（按钮聚焦边框）：
+  1. 根因剖析：在 `themes.py` 中，全局样式配置了 `QPushButton:focus { border: 1px solid #ff3656; }`（在特化主题下被映射为 `#ffb526` 金色/橘色）。用户点击“重播动画”等操作按钮后，按钮获得键盘焦点，导致控件外围被绘制上一圈醒目的聚焦矩形圆角边框（即“圆框”）。
+  2. 修复方案：
+     - 在 `themes.py` 中将 `QPushButton:focus` 改为 `outline: none;`，移除聚焦时边框颜色替换逻辑，并在特化主题追加配置中同样确保 `outline: none;`；
+     - 在 `controls.py` 中为重播动画、导入字体、描边颜色、预设更新与删除、隐藏歌词等操作按钮统一设置 `setFocusPolicy(Qt.FocusPolicy.NoFocus)`，鼠标点击后不驻留焦点，消除聚焦圆框。
+- 修复 QQ 音乐暂停时延迟 6 秒才停止问题：
+  1. 根因剖析：QQ 音乐 Mac 客户端在暂停时未将系统的 `kMRMediaRemoteNowPlayingInfoPlaybackRate` 置为 0（保持 1.0），且其 CoreAudio 音频输出单元在进入暂停后会维持 5~6 秒的静音活跃状态才彻底关闭。都市回响由于完全依赖系统 Rate 与 CoreAudio 输出检测，导致在用户按下暂停后依然推移 6 秒（如用户在 00:33 暂停，都市回响推移至 00:39 才停止）。
+  2. 修复方案：在 `macos_netease.py` 中新增 `get_mac_qqmusic_playback_state`，直接通过 macOS 系统菜单事件查询 QQ 音乐的“播放控制”菜单项（“暂停”代表当前正在播放，“播放”代表当前已暂停）。在后台轮询中即时识别暂停状态并同步修正 `state` 与 `rate`，暂停在毫秒级立即响应并冻结进度，彻底解决 6 秒延迟。
+
+### 测试与验证
+
+- 自动化单元测试：
+  - 在 `tests/test_core.py` 中新增 `test_theme_stylesheets_do_not_add_border_to_focused_pushbuttons`，覆盖浅色、深色与特化主题下按钮聚焦无边框规则；
+  - 在 `tests/test_macos.py` 中新增 `test_qqmusic_playback_state_from_menu_overrides_rate_one_on_pause`，验证暂停时菜单状态即时将 state 置为 paused 并将 rate 修正为 0.0，消除 6 秒延迟；
+  - 运行 `python -m unittest tests/test_core.py tests/test_workflow_docs.py tests/test_macos.py tests/test_qqmusic.py tests/test_qqmusic_cache.py tests/test_mac_distribution.py -v`：154 项测试全部通过（OK，skipped=1）。
+- 实际界面与系统调用实测：
+  - 按钮聚焦：点击“重播动画”按钮抓取像素，原 1396 个高亮橙色像素完全降为 0，不再出现聚焦边框；
+  - QQ 音乐菜单状态：实测 `get_mac_qqmusic_playback_state()` 在播放时准确返回 `True`，在暂停时即时返回 `False`，响应时间约 0.2 秒。
+
+### 影响与限制
+
+- 按钮点击后不再显示聚焦外框，视觉风格整洁统一；
+- QQ 音乐暂停与播放切换实时响应，不再滞后 6 秒；
+- 若环境未授予系统辅助权限，平滑回退至既有 CoreAudio 检测。
+
 ## 2026-10-14：彻底修复播放卡住冻结问题与歌手别名含符号匹配失败导致无歌词问题
 
 ### 改动

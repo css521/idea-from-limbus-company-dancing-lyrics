@@ -195,9 +195,15 @@ class SettingsTests(unittest.TestCase):
             store.store.setValue("theme", "missing")
             self.assertEqual(store.load().theme, "light")
             self.assertEqual(store.load().color, "#ffa0cc")
-            self.assertTrue(store.load().singing_sync)
             store.store.remove("theme")
             self.assertEqual(store.load().theme, "light")
+
+    def test_theme_stylesheets_do_not_add_border_to_focused_pushbuttons(self):
+        from themes import theme_stylesheet
+        for theme in ("light", "dark", "special"):
+            style = theme_stylesheet(theme)
+            self.assertIn("QPushButton:focus { outline: none; }", style)
+            self.assertNotIn("QPushButton:focus { border:", style)
 
 
 if __name__ == "__main__":

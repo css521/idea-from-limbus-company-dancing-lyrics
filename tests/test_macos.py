@@ -133,6 +133,23 @@ class MacParsingTests(unittest.TestCase):
         self.assertIsNone(mac.parse_nowplaying(qq_data, allowed_bundles=mac.NETEASE_BUNDLES))
         self.assertIsNotNone(mac.parse_nowplaying(qq_data, allowed_bundles=mac.QQMUSIC_BUNDLES))
 
+    def test_qqmusic_playback_state_from_menu_overrides_rate_one_on_pause(self):
+        qq_data = self.snapshot(
+            kMRMediaRemoteNowPlayingInfoClientBundleIdentifier="com.tencent.QQMusicMac",
+            kMRMediaRemoteNowPlayingInfoPlaybackRate=1.0,
+        )
+        # 暂停时菜单项为“播放”，必须立即识别为 paused 且 rate=0.0，消除 6 秒延迟
+        paused = mac.parse_nowplaying(qq_data, qqmusic_state_func=lambda: False)
+        self.assertEqual((paused.state, paused.rate), ("paused", 0.0))
+
+        # 播放中菜单项为“暂停”，判定为 playing 且 rate=1.0
+        playing = mac.parse_nowplaying(qq_data, qqmusic_state_func=lambda: True)
+        self.assertEqual((playing.state, playing.rate), ("playing", 1.0))
+
+        # 无法获取菜单状态时安全回退至系统 rate
+        fallback = mac.parse_nowplaying(qq_data, qqmusic_state_func=lambda: None)
+        self.assertEqual((fallback.state, fallback.rate), ("playing", 1.0))
+
 
 class MacOffsetTests(unittest.TestCase):
     def test_zero_offsets_unicode_paths_and_reload(self):
