@@ -38,10 +38,22 @@ def normalized(value):
     return "".join(unicodedata.normalize("NFKC", html.unescape(value)).casefold().split())
 
 
+def clean_artist_tokens(value):
+    # Strip trailing bracketed alias from the entire string first so that
+    # internal delimiters like "&" in "(마리오&네스티)" do not break open the bracket.
+    cleaned = re.sub(r"\s*[（(][^()（）]*[)）]\s*$", "", value.strip())
+    tokens = re.split(r"[/、,，;&]", cleaned if cleaned else value)
+    result = []
+    for token in tokens:
+        token_clean = re.sub(r"\s*[（(][^()（）]*[)）]\s*$", "", token).strip()
+        if token_clean:
+            result.append(token_clean)
+    return result
+
+
 def artist_names(value):
-    # QQ's SMTC uses display aliases such as Mili (ミリー), while search uses Mili.
-    return {normalized(re.sub(r"\s*[（(][^()（）]*[)）]\s*$", "", name))
-            for name in re.split(r"[/、,，;&]", value) if name.strip()}
+    # QQ's SMTC uses display aliases such as Mili (ミリー) or Mario & Nesty (마리오&네스티), while search uses base names.
+    return {normalized(name) for name in clean_artist_tokens(value)}
 
 
 def request_json(url, body=None):
@@ -192,8 +204,7 @@ def _checkpoint(cancelled):
 def _search_song(snapshot, cancelled):
     # Search's query parser is case/order sensitive for some collaborations.
     # Preserve the client's display order and spelling; normalize only to compare.
-    singers = [re.sub(r"\s*[（(][^()（）]*[)）]\s*$", "", name).strip()
-               for name in re.split(r"[/、,，;&]", snapshot.artist) if name.strip()]
+    singers = clean_artist_tokens(snapshot.artist)
     # QQ sometimes rejects a title+artists query with code 2001 even when the
     # title-only or artist-first query works. Bound discovery to three distinct
     # queries, never broaden the identity checks or repeat a failed query.

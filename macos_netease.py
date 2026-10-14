@@ -271,9 +271,8 @@ def _fetch_qq_lyrics_by_mid(mid, song_id=0, cancelled=lambda: False):
 
 
 def _find_mac_song_candidate(snapshot, cancelled=lambda: False):
-    from qqmusic_lyrics import request_json, SEARCH_MODULE, normalized, artist_names
-    singers = [re.sub(r"\s*[（(][^()（）]*[)）]\s*$", "", name).strip()
-               for name in re.split(r"[/、,，;&]", snapshot.artist) if name.strip()]
+    from qqmusic_lyrics import request_json, SEARCH_MODULE, normalized, artist_names, clean_artist_tokens
+    singers = clean_artist_tokens(snapshot.artist)
     artist_query = " ".join(singers)
     queries = dict.fromkeys((f"{snapshot.title} {artist_query}".strip(), snapshot.title,
                              f"{artist_query} {snapshot.title}".strip()))
@@ -670,19 +669,7 @@ class MacNeteasePlayer(QObject):
         except TypeError:
             audio_running = audio_func()
         if raw_playing and self.is_qqmusic:
-            if not audio_running:
-                playing = False
-            elif switched or self._last_raw is None or info.position_ms > self._last_raw:
-                self._last_pos_advanced_at = now
-                playing = True
-            elif info.position_ms == self._last_raw:
-                if (now - self._last_pos_advanced_at) >= 1.8 and (self.position() - info.position_ms) >= 1200:
-                    playing = False
-                else:
-                    playing = self.playing
-            else:
-                self._last_pos_advanced_at = now
-                playing = self.playing
+            playing = bool(audio_running if audio_running is not None else raw_playing)
         else:
             playing = raw_playing
 

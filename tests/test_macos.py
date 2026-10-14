@@ -402,41 +402,45 @@ class MacPlayerTests(unittest.TestCase):
         finally:
             player.stop()
 
-    def test_qqmusic_pause_with_active_audio_and_rate_one_detects_pause_by_position_stall(self):
-        # 即使 CoreAudio 活跃（如蓝牙耳机挂载）且 QQ 音乐未将 rate 置 0，位置停滞时亦能准确识别暂停
+    def test_qqmusic_continuous_playback_does_not_freeze_when_position_static(self):
+        # QQ 音乐 Mac 客户端在正常播放中 ElapsedTime 保持静止，依赖本地虚拟时钟平滑前进，绝不能误判暂停
         clock_time = [10.0]
-        player = mac.MacNeteasePlayer(autostart=False, clock=lambda: clock_time[0], query=lambda: None, audio_running=lambda *_: True)
+        audio_state = [True]
+        player = mac.MacNeteasePlayer(autostart=False, clock=lambda: clock_time[0], query=lambda: None, audio_running=lambda *_: audio_state[0])
         try:
-            # 起播在 146000 (02:26)
-            snap = mac.NowPlaying("playing", "Love You", "Selena", 188000, 146000, rate=1.0, bundle="com.tencent.QQMusicMac")
+            # 起播在 74000 (01:14)，rate=1.0
+            snap = mac.NowPlaying("playing", "TIAN TIAN", "Mili", 248000, 74000, rate=1.0, bundle="com.tencent.QQMusicMac")
             player.apply(snap, captured=10.0)
             self.assertTrue(player.playing)
-            self.assertEqual(player.position(), 146000)
+            self.assertEqual(player.position(), 74000)
 
-            # 0.5s 后，QQ 音乐尚未上报新秒数，允许平滑推移
-            clock_time[0] = 10.5
-            player.apply(snap, captured=10.5)
+            # 正常播放 5 秒后，QQ 音乐系统 ElapsedTime 保持 74000 不变，本地时钟持续平滑推移至 79000
+            clock_time[0] = 15.0
+            player.apply(snap, captured=15.0)
             self.assertTrue(player.playing)
-            self.assertEqual(player.position(), 146500)
+            self.assertEqual(player.position(), 79000)
 
-            # 用户在 QQ 音乐中按下暂停（位置停滞在 146000），2.0s 后漂移超 1.2s，必须识别为暂停
-            clock_time[0] = 12.0
-            player.apply(snap, captured=12.0)
+            # 用户在 QQ 音乐中按下暂停（rate=0 或 CoreAudio 输出停止）
+            audio_state[0] = False
+            paused_snap = mac.NowPlaying("paused", "TIAN TIAN", "Mili", 248000, 79000, rate=0.0, bundle="com.tencent.QQMusicMac")
+            clock_time[0] = 15.2
+            player.apply(paused_snap, captured=15.2)
             self.assertFalse(player.playing)
             paused_pos = player.position()
 
-            # 之后继续流逝 3s，位置不再累加，保持完全冻结
-            clock_time[0] = 15.0
-            player.apply(snap, captured=15.0)
+            # 暂停后继续流逝 5 秒，位置保持绝对冻结
+            clock_time[0] = 20.2
+            player.apply(paused_snap, captured=20.2)
             self.assertFalse(player.playing)
             self.assertEqual(player.position(), paused_pos)
 
-            # 恢复播放（位置前进到 147000）
-            clock_time[0] = 15.5
-            resumed_snap = mac.NowPlaying("playing", "Love You", "Selena", 188000, 147000, rate=1.0, bundle="com.tencent.QQMusicMac")
-            player.apply(resumed_snap, captured=15.5)
+            # 恢复播放
+            audio_state[0] = True
+            resumed_snap = mac.NowPlaying("playing", "TIAN TIAN", "Mili", 248000, 79000, rate=1.0, bundle="com.tencent.QQMusicMac")
+            clock_time[0] = 20.5
+            player.apply(resumed_snap, captured=20.5)
             self.assertTrue(player.playing)
-            self.assertEqual(player.position(), 147000)
+            self.assertEqual(player.position(), 79000)
         finally:
             player.stop()
 

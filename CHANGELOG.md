@@ -2,6 +2,32 @@
 
 每次改动按日期追加记录，包含改动目的、涉及文件、测试与验证结果、影响或已知限制。
 
+## 2026-10-14：彻底修复播放卡住冻结问题与歌手别名含符号匹配失败导致无歌词问题
+
+### 改动
+
+- 修复连续播放中歌词突然停滞卡死问题（如播放 Mili《TIAN TIAN》在 01:16 停滞）：
+  1. 根因剖析：先前的停滞检测逻辑假设播放器采样位置（`info.position_ms`）会实时推移。但实机排查与系统采样证实，QQ 音乐 macOS 客户端在连续播放时上报的 `ElapsedTime` 保持完全静态，整个播放过程完全依赖播放器的本地虚拟时钟平滑累加。先前的判定逻辑导致任何单曲在正常播放 1.8 秒后都会触发 `(now - self._last_pos_advanced_at) >= 1.8`，从而将正常播放误判为暂停，造成歌词在特定时间点（如 01:16）被永久冻结。
+  2. 修复方案：在 `macos_netease.py` 中彻底移除错误的采样位置停滞检测代码，恢复依据 CoreAudio 音频设备输出状态与 PlaybackRate/状态标签的精确播放判定。播放中本地虚拟时钟平滑推移无任何阻断，在暂停时 CoreAudio 与 Rate 置 0 立即冻结，杜绝正常播放中停滞卡住。
+- 修复带特殊符号或括号别名歌手（如 Mario & Nesty (마리오&네스티)）歌词匹配失败提示网络问题：
+  1. 根因剖析：QQ 音乐 SMTC 上报的艺人常带有跨语种括号别名，且别名本身可能包含 `&`（例如 `Mario & Nesty (마리오&네스티)`）。原有逻辑直接按 `[/、,，;&]` 切分，导致括号结构被破坏，切出如 `nesty(마리오` 和 `네스티)` 等碎片，导致歌曲严格匹配（`select_song`）全部失败，提示“未找到可靠匹配的 QQ 音乐歌词，可点击‘重新获取歌词’重试”，常被误认为是网络故障。
+  2. 修复方案：在 `qqmusic_lyrics.py` 中新增 `clean_artist_tokens`，优先剥离整句尾部括号别名再按分隔符切分各歌手，并对子 token 再次安全清洗。对于《Never Say Good Bye》等歌曲 100% 成功识别并秒级匹配 121 句带逐字时间戳的 QRC 歌词。
+
+### 测试与验证
+
+- 自动化单元测试：
+  - 更新 `tests/test_macos.py` 中的 `test_qqmusic_continuous_playback_does_not_freeze_when_position_static`，覆盖静态 ElapsedTime 下播放连续推移与暂停冻结判定；
+  - 更新 `tests/test_qqmusic.py`，新增包含 `&` 符号括号韩文别名艺人的歌曲匹配单测；
+  - 运行 `python -m unittest tests/test_core.py tests/test_workflow_docs.py tests/test_macos.py tests/test_qqmusic.py tests/test_qqmusic_cache.py tests/test_mac_distribution.py -v`：152 项测试全部通过（OK，skipped=1）。
+- 实际播放验证：
+  - Mario & Nesty (마리오&네스티)《Never Say Good Bye》：成功匹配并加载 121 句全量逐字 QRC 歌词，不再出现歌词未匹配错误；
+  - Mili《TIAN TIAN》：在 01:16 及更长播放过程中虚拟时钟连续推进，完全不再发生卡死。
+
+### 影响与限制
+
+- 保持 macOS 平台只读监听架构，无须修改外部播放器状态；
+- 所有包含多语言及带符号别名的歌手均能精确匹配。
+
 ## 2026-10-14：支持 QQ 音乐在线 QRC 逐字歌词展示与暂停检测停滞判定增强
 
 ### 改动

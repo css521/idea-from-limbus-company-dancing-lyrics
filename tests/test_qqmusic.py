@@ -105,6 +105,9 @@ class QQParsingTests(unittest.TestCase):
         candidate = song(title="Let’s go & back", singer=[{"name":"Mili"},{"name":"KIHOW"}])
         self.assertIsNotNone(lyrics.select_song([candidate], "Let’s go &amp; back", "Mili (ミリー)/KIHOW", 60000))
         self.assertIsNone(lyrics.select_song([candidate], "Let’s go & back", "Mili", 60000))
+        # 括号别名内部含有 & 或分隔符时不应破坏外层歌手解析
+        mario = song(title="Never Say Good Bye", singer=[{"name": "Mario & Nesty"}], interval=238)
+        self.assertIsNotNone(lyrics.select_song([mario], "Never Say Good Bye", "Mario & Nesty (마리오&네스티)", 238000))
 
     def test_base64_lrc_translation_blank_boundaries_offsets_and_no_fake_word_times(self):
         doc = lyrics.parse_lyrics({"lyric": encode("[offset:100]\n[00:01]Hi é 👩‍💻\n[00:02]\n[00:03]Goodbye"),
