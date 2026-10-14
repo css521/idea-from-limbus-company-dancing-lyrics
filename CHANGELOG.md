@@ -2,7 +2,41 @@
 
 每次改动按日期追加记录，包含改动目的、涉及文件、测试与验证结果、影响或已知限制。
 
+## 2026-10-14：彻底消除 macOS 下下拉菜单与弹出窗口的白色边框穿透问题
+
+### 改动
+
+- 响应用户反馈的“白边”问题（macOS 下点击预设方案、主题等任意 `QComboBox` 下拉框或托盘菜单时，弹出的浮层四周出现刺眼的白色矩形底边/方角）：
+  1. **问题根因**：
+     - 在 macOS Cocoa 环境下，`QComboBox` 的下拉列表（`QComboBoxPrivateContainer` 容器）默认创建了不透明（`isOpaque: YES`）且背景为 `#ffffff` 的原生 `NSWindow`；当内部 `QListView` 依据 QSS 样式绘制 6px 圆角实体时，四个圆角未覆盖区域和容器空白外边距直接露出了系统的原生纯白底色，形成刺眼的白色方框和外边。
+     - 另外，主程序未同步更新 `QApplication` 的全局深色 `QPalette`，导致所有顶级弹出窗口的系统默认调色板回退至白色基底。
+  2. **代码修复与消除 (`controls.py`, `themes.py`)**：
+     - 在 `controls.py` 中新增 `_fix_combobox_popups(self)` 方法，遍历控制面板内所有的 `QComboBox` 控件，获取其弹出容器窗口：
+       - 设置 `container.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)` 启用窗口级像素 Alpha 透明；
+       - 设置 `container.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)` 消除原生窗口阴影与矩形边框残留；
+     - 在 `_apply_theme` 主题切换时，同步更新 `QApplication.instance().setPalette(palette)`，确保所有新创建的弹出窗口与菜单默认继承深色基底调色板；
+     - 在 `_setup_tray` 托盘菜单中设置 `WA_TranslucentBackground` 与 `Popup | FramelessWindowHint`，保证右键菜单无白底；
+     - 在 `themes.py` 中为 `QComboBox QAbstractItemView` 补全 `outline: 0px;`，消除键盘焦点时的多余轮廓。
+
+### 测试与验证
+
+- 自动化测试与文档校验：
+  - 运行 `.venv/bin/python -m unittest tests/test_core.py tests/test_workflow_docs.py tests/test_glyph_motion.py tests/test_text_effects.py tests/test_presets.py -v`：共 80 项自动测试全部通过；
+  - 运行 `.venv/bin/python -m unittest tests/test_macos.py -v`：新增的 `test_macos_combobox_and_menu_popups_remove_white_border` 等共 43 项测试全部通过（OK）；
+- 实测截图校验：
+  - 生成 `artifacts/real_preset_combo.png` 与 `artifacts/real_theme_combo.png` 进行高分辨率像素核验，确认所有圆角边缘平滑透明，原纯白色矩形边框与外底已 100% 彻底消除；
+- 集成验证与烟雾检查：
+  - 运行 `.venv/bin/python main.py --smoke`：全量静音烟雾验证通过（`passed: true`）；
+- 构建打包与提取：
+  - 运行 `tools/build_macos.py` 重新生成打包发布归档；
+  - 执行 `ditto -x -k artifacts/mac-release/city-echoes-0.6.0-beta.2-macos.1-arm64.zip build/macos-dist` 将独立可执行 app 解压至 `build/macos-dist/`。
+
+### 影响与限制
+
+- 彻底消除下拉菜单四周的系统白底与白边，下拉弹窗与特殊主题（暗曜古金/玄黑）风格完美浑然一体。
+
 ## 2026-10-14：重构效果页面整体布局为边狱终端科技风并明确标注原作者与优化人
+
 
 ### 改动
 

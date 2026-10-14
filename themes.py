@@ -73,7 +73,7 @@ QComboBox, QSpinBox { background: $surface; border: 1px solid $border; border-ra
 QComboBox:focus, QSpinBox:focus { border-color: #ff3656; }
 QComboBox:disabled, QSpinBox:disabled { color: $disabled; background: $disabled_surface; }
 QComboBox::drop-down { border: none; width: 26px; }
-QComboBox QAbstractItemView { background: $surface; color: $text; selection-background-color: $selection; selection-color: $selection_text; border: 1px solid $border; border-radius: 6px; padding: 4px; }
+QComboBox QAbstractItemView { background: $surface; color: $text; selection-background-color: $selection; selection-color: $selection_text; border: 1px solid $border; border-radius: 6px; padding: 4px; outline: 0px; }
 QSpinBox::up-button, QSpinBox::down-button { width: 22px; }
 QSlider { background: transparent; }
 QSlider::groove:horizontal, QSlider::add-page:horizontal { height: 5px; background: $track; border: none; border-radius: 2px; }

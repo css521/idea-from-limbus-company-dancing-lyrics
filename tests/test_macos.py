@@ -810,6 +810,44 @@ class MacPlatformTests(unittest.TestCase):
             self.assertTrue(bool(result.document.lines[0].words))
             self.assertEqual(word_timing_status(result.document), "逐字时间可用")
 
+    def test_macos_combobox_and_menu_popups_remove_white_border(self):
+        from overlay import LyricsOverlay
+        from settings import Preferences, SettingsStore
+        from controls import ControlPanel
+        from themes import theme_stylesheet
+        from PySide6.QtWidgets import QComboBox, QApplication
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QPalette
+
+        with tempfile.TemporaryDirectory() as temporary:
+            player = mac.MacNeteasePlayer(query=lambda: None, clock=lambda: 0, autostart=False)
+            prefs = Preferences()
+            overlay = LyricsOverlay(player, prefs)
+            panel = ControlPanel(player, overlay, prefs, SettingsStore(Path(temporary) / "settings.ini"))
+            try:
+                combos = panel.findChildren(QComboBox)
+                self.assertGreater(len(combos), 0)
+                for combo in combos:
+                    container = combo.view().window()
+                    self.assertTrue(container.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground))
+                    self.assertTrue(container.windowFlags() & Qt.WindowType.FramelessWindowHint)
+                self.assertTrue(panel.tray_menu.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground))
+                self.assertTrue(panel.tray_menu.windowFlags() & Qt.WindowType.FramelessWindowHint)
+                app = QApplication.instance()
+                self.assertIsNotNone(app)
+                self.assertEqual(app.palette().color(QPalette.ColorRole.Window), panel.palette().color(QPalette.ColorRole.Window))
+                style = theme_stylesheet(prefs.theme)
+                self.assertIn("outline: 0px", style)
+            finally:
+                panel.refresh_timer.stop()
+                panel.font_preview.timer.stop()
+                panel.tray.hide()
+                panel.hide()
+                panel.deleteLater()
+                overlay.close()
+                overlay.deleteLater()
+                player.stop()
+
 
 if __name__ == "__main__":
     unittest.main()

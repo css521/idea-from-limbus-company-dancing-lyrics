@@ -383,6 +383,16 @@ class ControlPanel(QWidget):
         self._refresh_state()
         if self.presets.error:
             self.show_notice(self.presets.error)
+        self._fix_combobox_popups()
+
+    def _fix_combobox_popups(self):
+        for combo in self.findChildren(QComboBox):
+            try:
+                container = combo.view().window()
+                container.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+                container.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+            except Exception:
+                pass
 
     def _build_sidebar(self):
         self.sidebar = ThemeFrame()
@@ -460,14 +470,19 @@ class ControlPanel(QWidget):
         style, palette = theme_stylesheet(self.prefs.theme), theme_palette(self.prefs.theme)
         self.setProperty("interfaceTheme", self.prefs.theme)
         self.setPalette(palette)
+        app = QApplication.instance()
+        if app:
+            app.setPalette(palette)
         self.setStyleSheet(style)
         icon = app_icon(self.prefs.theme)
         self.setWindowIcon(icon)
-        QApplication.instance().setWindowIcon(icon)
+        if app:
+            app.setWindowIcon(icon)
         self.tray.setIcon(icon)
         self.brand_icon.setPixmap(icon.pixmap(36, 36))
         self.tray_menu.setPalette(palette)
         self.tray_menu.setStyleSheet(style)
+        self._fix_combobox_popups()
         color = theme_colors(self.prefs.theme)["muted"]
         for button, kind in ((self.tray_button, "tray"), (self.exit_button, "exit"),
                              (self.lyrics_button, "lyrics"), (self.demo_button, "play"),
@@ -951,6 +966,8 @@ class ControlPanel(QWidget):
         self.tray = QSystemTrayIcon(self.windowIcon(), self)
         self.tray.setToolTip(APP_NAME)
         menu = QMenu()
+        menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        menu.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
         open_action = QAction("打开控制面板", self)
         open_action.triggered.connect(self.show_panel)
         self.tray_play = QAction("播放 / 暂停", self)
