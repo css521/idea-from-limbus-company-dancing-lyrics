@@ -2,6 +2,44 @@
 
 每次改动按日期追加记录，包含改动目的、涉及文件、测试与验证结果、影响或已知限制。
 
+## 2026-10-14：重构并大幅强化 E.G.O 侵蚀与金枝绽放动画动力学与视觉表现力
+
+### 改动
+
+- 响应视觉反馈，针对此前常态（steady-state）时间内色散趋近于零、位移缺乏专属物理特征的问题进行深度重构，使两种边狱公司／月亮门世界观特效在整句显示的常态、旋律高潮、入场与退场阶段呈现出极具视觉冲击力与辨识度的世界观质感：
+  1. **E.G.O 侵蚀 (E.G.O Corrosion)**：
+     - **常态黏滞下渗流淌**：重构波形为非对称重力拉扯（`drip_mult = 1.7 if wave > 0 else 0.7`），字形如粘液拖拽般持续向下流淌；叠加常态下垂（`droop`）与流体水平蠕动震颤（`tremor`，14Hz 阶梯时钟）；
+     - **常态深渊·暴戾色散脉冲**：常驻深红色散脉冲（2.2px ~ 5.0px），随旋律能量与节奏呼吸抽搐；
+     - **2D 异向色散图层渲染**：`text_effects.py` 扩展支持 `(dx, dy)` 二维位移，深渊漆黑层向左下流淌偏移（`dx=-split*0.8, dy=split*0.7`），暴戾深红向右上撕裂偏移（`dx=split, dy=-split*0.4`），图层不透明度提升至 0.85，立体下渗感极其鲜明；
+     - **沉沦消解退场**：退场时受 `fall_distance` 驱动加速下坠跌落（`leaving ** 1.5`），伴随强烈的水平撕裂错位与倾角偏转。
+  2. **金枝绽放 (Golden Bough Bloom)**：
+     - **反重力轻盈浮升 (Levitation)**：全句文字优雅悬浮于基线之上（`float_dy = -3.5 - 2.5 * sin(...)`，整体向上抬升 1.0px ~ 6.0px），摆脱地面重力约束；
+     - **金枝花蕾呼吸缩放 (Breathing Scale)**：字符伴随旋律起伏自然舒展与膨胀（`breathe_scale` 1.01 ~ 1.13），呈现如金枝共鸣开花般的光华律动；
+     - **常态耀日金环交叉色散**：常驻暖日耀金与温润琥珀色散（2.2px ~ 4.7px），在 `text_effects.py` 中以十字交叉光晕（`dx=-split*0.8, dy=-split*0.5` 与 `dx=split*0.8, dy=split*0.5`）向外放射，金色光晕璀璨耀眼；
+     - **升华消散退场**：退场时优雅向高空升华（`leave_dy = -leaving * 16.0`），字号膨胀化为光之粒子消散。
+  3. **严格基线与包围盒契约**：
+     - 当用户将跳动幅度设为 0（`jump = 0`）时，`jump_ratio = 0`，所有额外位移、缩放与色散完全归零，100% 维持像素级静态基线对齐与字号规范；
+     - 精确微调 `motion_bounds`，在全倾角、高 DPR 与极端字符排版下均保证布局包围盒与屏幕边缘绝对无缝贴合、无截断。
+
+### 测试与验证
+
+- 自动化单元测试：
+  - 运行 `python -m unittest tests/test_glyph_motion.py tests/test_text_effects.py tests/test_singing_sync.py tests/test_presets.py tests/test_core.py tests/test_workflow_docs.py -v`：全部 106 项测试 100% 通过（OK，skipped=1）；
+  - 在 `tests/test_glyph_motion.py` 中新增常态色散下限（`split >= 1.5`）、金枝反重力浮升（`y < 0`）、呼吸膨胀（`scale > 1.02`）、侵蚀流体震颤与零跳幅绝对基线契约校验；
+  - 在 `tests/test_text_effects.py` 中验证二维异向色散渲染与高透明度分色图层绘制。
+- 完整烟雾测试与性能基准：
+  - 运行 `python main.py --smoke`：全部指标通过（`passed: true`）：
+    - 11 种动画风格在 3024×1898 物理画布、DPR 2.0、51 字符双句下的暖帧 P95 渲染耗时均在 3.2ms ~ 18.0ms 之间，远优于 33ms 限制（`corrosion_wave`: 10.45ms, `corrosion_shake`: 8.43ms, `bloom_wave`: 11.98ms, `bloom_shake`: 15.02ms）；
+    - 暂停状态完全冻结（`singing_freezes_on_paused_song_clock: true`, `animation_parameters_preserve_paused_clock: true`）。
+- 打包交付：
+  - 运行 `tools/build_macos.py` 重新生成 `artifacts/mac-release/city-echoes-0.6.0-beta.2-macos.1-arm64.zip`；
+  - 解压最新产物完整同步覆盖至 `build/macos-dist/`，包含 `都市回响.app`、`CityEchoes`、`安装播放读取工具.command` 及完整证书与说明文档。
+
+### 影响与限制
+
+- 侵蚀与绽放现在无论在整句播放常态还是高潮段，均呈现出极为鲜明、对比强烈的世界观物理动态与分色光晕；
+- `jump = 0` 仍完全保留纯文字平静基线模式，满足静止展示需求。
+
 ## 2026-10-14：新增 E.G.O 侵蚀／金枝绽放歌词特效、脑叶公司危险等级预设及但丁 PDA 风格切歌浮窗
 
 ### 改动

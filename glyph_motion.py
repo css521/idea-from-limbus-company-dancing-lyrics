@@ -85,10 +85,15 @@ def glyph_states(glyphs, prefs, item, position_ms, energy, pixels, seed=0, angle
             dy = amplitude * .5 * noise(seed, rank, 1, seconds, prefs.shake_frequency)
         else:
             dx = 0
-            dy = amplitude * .4 * math.sin(seconds * 2 * math.pi * 1.5 - rank * .6)
+            if corrosion:
+                c_wave = math.sin(seconds * 2 * math.pi * 1.3 - rank * .7)
+                drip_mult = 1.7 if c_wave > 0 else 0.7
+                dy = amplitude * .45 * c_wave * drip_mult
+            else:
+                dy = amplitude * .4 * math.sin(seconds * 2 * math.pi * 1.5 - rank * .6)
         if corrosion:
-            distance = prefs.fall_distance * pixels / 32 * leaving ** 1.8 * 0.75
-            rotation = (8 if noise_value(seed, rank, 2, 0) >= 0 else -8) * leaving ** 1.8
+            distance = prefs.fall_distance * pixels / 32 * (leaving ** 1.5) * 1.0
+            rotation = (10 if noise_value(seed, rank, 2, 0) >= 0 else -10) * (leaving ** 1.5)
         elif falling:
             distance = prefs.fall_distance * pixels / 32 * leaving ** 2
             rotation = (8 if noise_value(seed, rank, 2, 0) >= 0 else -8) * leaving ** 2
@@ -135,36 +140,55 @@ def glyph_states(glyphs, prefs, item, position_ms, energy, pixels, seed=0, angle
 
         elif corrosion and prefs.jump > 0:
             jump_ratio = min(1.0, prefs.jump / 10.0)
-            enter_split = leave_split = 0.0
+            tremor_step = math.floor(seconds * 14)
+            tremor = noise_value(seed, rank, 19, tremor_step) * 1.8 * jump_ratio
+            droop = (1.5 + 0.8 * math.sin(seconds * 3.0 + rank * 0.4)) * jump_ratio
+            dx += tremor
+            dy += droop
+
+            enter_dy = enter_split = 0.0
             if entering < 1.0:
-                enter_dy = (1.0 - entering) * 8.0 * jump_ratio
+                enter_dy = (1.0 - entering) * 12.0 * jump_ratio
                 dy += enter_dy
-                enter_split = (1.0 - entering) * 2.0 * jump_ratio
+                enter_split = (1.0 - entering) * 3.5 * jump_ratio
+
+            leave_dx = leave_split = 0.0
             if leaving > 0.0:
-                l_step = math.floor(seconds * 14)
-                leave_dx = noise_value(seed, rank, 13, l_step) * leaving * 5.0 * jump_ratio
+                l_step = math.floor(seconds * 16)
+                leave_dx = noise_value(seed, rank, 13, l_step) * leaving * 7.0 * jump_ratio
                 dx += leave_dx
-                leave_split = leaving * 3.5 * jump_ratio
-            pulse = (emphasis * 2.0 + 0.5 * max(0.0, min(1.0, energy))) * jump_ratio if opacity > 0 else 0.0
-            split = max(enter_split, leave_split, pulse)
+                leave_split = leaving * 5.0 * jump_ratio
+
+            steady_split = (2.2 + 1.2 * math.sin(seconds * 3.5 + rank * 0.5) + 1.6 * max(0.0, min(1.0, energy)) + emphasis * 2.5) * jump_ratio if opacity > 0 else 0.0
+            twitch_step = math.floor(seconds * 6)
+            twitch = (1.8 * jump_ratio) if (noise_value(seed, rank, 23, twitch_step) > 0.65 and opacity > 0) else 0.0
+            split = max(enter_split, leave_split, steady_split + twitch)
 
         elif bloom:
             enter_split = leave_split = 0.0
+            enter_s = leave_s = 1.0
+            breathe_scale = 1.0
             if prefs.jump > 0:
                 jump_ratio = min(1.0, prefs.jump / 10.0)
+                float_dy = (-3.5 - 2.5 * math.sin(seconds * 2.0 - rank * 0.5)) * jump_ratio
+                dy += float_dy
+
+                breathe = math.sin(seconds * 2.8 - rank * 0.4)
+                breathe_scale = 1.0 + (0.04 + 0.03 * breathe + 0.06 * max(0.0, min(1.0, energy))) * jump_ratio if opacity > 0 else 1.0
+
                 if entering < 1.0:
-                    enter_dy = (1.0 - entering) * -8.0 * jump_ratio
+                    enter_dy = (1.0 - entering) * -10.0 * jump_ratio
                     dy += enter_dy
-                    enter_split = (1.0 - entering) * 2.0 * jump_ratio
+                    enter_split = (1.0 - entering) * 3.0 * jump_ratio
+                    enter_s = 1.0 - 0.15 * (1.0 - smooth(entering)) * jump_ratio
                 if leaving > 0.0:
-                    leave_dy = -leaving * 12.0 * jump_ratio
+                    leave_dy = -leaving * 16.0 * jump_ratio
                     dy += leave_dy
-                    leave_split = leaving * 3.0 * jump_ratio
-                pulse = (emphasis * 2.5) * jump_ratio if opacity > 0 else 0.0
-                split = max(enter_split, leave_split, pulse)
-            enter_s = 0.88 + 0.12 * smooth(entering)
-            leave_s = 1.0 + 0.08 * smooth(leaving)
-            scale = enter_s * leave_s * (1 + .08 * emphasis if opacity > 0 else 1)
+                    leave_split = leaving * 4.5 * jump_ratio
+                    leave_s = 1.0 + 0.15 * smooth(leaving) * jump_ratio
+                steady_split = (2.2 + 1.0 * math.sin(seconds * 3.2 + rank * 0.6) + 1.5 * max(0.0, min(1.0, energy)) + emphasis * 2.2) * jump_ratio if opacity > 0 else 0.0
+                split = max(enter_split, leave_split, steady_split)
+            scale = enter_s * leave_s * breathe_scale * (1 + .08 * emphasis if opacity > 0 else 1)
 
         # Convert screen-vertical fall to the tilted sentence's local coordinates.
         result.append(GlyphState(glyph.x + dx + math.sin(radians) * distance,
@@ -195,15 +219,15 @@ def motion_bounds(ink, pixels, jump, style, angle=0, fall_distance=48, singing_s
         for rotation in (-8, 8):
             bounds = bounds.united(QTransform().rotate(rotation).mapRect(ink))
         radians = math.radians(angle)
-        distance = fall_distance * pixels / 32 * 0.75
+        distance = fall_distance * pixels / 32 * 0.85
         bounds = bounds.united(bounds.translated(math.sin(radians) * distance,
                                                 math.cos(radians) * distance))
-        bounds = bounds.adjusted(-4, -2, 4, 2)
+        bounds = bounds.adjusted(-1, -2, 1, 4)
     elif style.startswith("bloom_"):
-        scale = 1.12 * (1.12 if singing_sync else 1.0)
+        scale = 1.08 * (1.12 if singing_sync else 1.0)
         scaled = ink.united(QRectF(ink.x() * scale, ink.y() * scale, ink.width() * scale, ink.height() * scale))
-        bounds = bounds.united(scaled.translated(0, -12 if jump > 0 else 0))
-        bounds = bounds.adjusted(-4, -4, 4, 4)
+        bounds = bounds.united(scaled.translated(0, -10 if jump > 0 else 0))
+        bounds = bounds.adjusted(-2, -3, 2, 3)
     elif style.startswith("glitch_"):
         bounds = bounds.adjusted(-4, -2, 4, 2)
     return bounds.adjusted(-jump * .3 - 2, -jump * .5 - 2, jump * .3 + 2, jump * .5 + 2)

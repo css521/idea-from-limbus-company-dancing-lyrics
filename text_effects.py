@@ -243,13 +243,15 @@ class TextEffects:
         painter = QPainter(surface.image)
         painter.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
         painter.translate(-surface.origin)
+        is_corrosion = prefs.animation_style.startswith("corrosion_")
+        is_bloom = prefs.animation_style.startswith("bloom_")
 
-        def draw(index, layer, opacity, dx=0.0):
+        def draw(index, layer, opacity, dx=0.0, dy=0.0):
             material, state = materials[index], states[index]
             if material is None or state.opacity <= 0 or opacity <= 0:
                 return
             painter.save()
-            painter.translate(state.x + dx, state.y)
+            painter.translate(state.x + dx, state.y + dy)
             painter.rotate(state.rotation)
             painter.scale(state.scale, state.scale)
             painter.setOpacity(opacity)
@@ -271,8 +273,17 @@ class TextEffects:
             if material is not None and len(material) >= 5 and material[3] is not None:
                 split = getattr(state, "split", 0.0)
                 if split > 0:
-                    draw(index, 3, state.opacity * 0.75, dx=-split)
-                    draw(index, 4, state.opacity * 0.75, dx=split)
+                    if is_corrosion:
+                        # Void shadow drips down-left, blood red splatters up-right
+                        draw(index, 3, state.opacity * 0.85, dx=-split * 0.8, dy=split * 0.7)
+                        draw(index, 4, state.opacity * 0.85, dx=split, dy=-split * 0.4)
+                    elif is_bloom:
+                        # Golden bough warm radiance shines outward as cross-halo
+                        draw(index, 3, state.opacity * 0.85, dx=-split * 0.8, dy=-split * 0.5)
+                        draw(index, 4, state.opacity * 0.85, dx=split * 0.8, dy=split * 0.5)
+                    else:
+                        draw(index, 3, state.opacity * 0.75, dx=-split)
+                        draw(index, 4, state.opacity * 0.75, dx=split)
             draw(index, 1, state.opacity)
         painter.end()
         return surface.image

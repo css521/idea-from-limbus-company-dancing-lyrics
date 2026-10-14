@@ -162,10 +162,32 @@ class CharacterMotionTests(unittest.TestCase):
         self.assertTrue(any(s.split > 0 for s in corrosion))
         self.assertEqual(corrosion, self.states(1200, "corrosion_wave", jump=10, seed=42))
 
-        bloom = self.states(1200, "bloom_wave", jump=10, seed=42)
-        self.assertTrue(any(s.split > 0 for s in bloom))
-        self.assertEqual(bloom, self.states(1200, "bloom_wave", jump=10, seed=42))
-        self.assertTrue(any(s.scale > 1.0 for s in self.states(4200, "bloom_wave", jump=10)))
+        # Steady-state corrosion: persistent dark-red aberration and liquid tremor
+        corrosion_steady = self.states(2000, "corrosion_wave", jump=10, seed=42)
+        self.assertTrue(all(s.split >= 1.5 for s in corrosion_steady))
+        self.assertTrue(any(s.x != g.x for s, g in zip(corrosion_steady, self.glyphs)))
+
+        # Bloom steady-state: anti-gravity levitation, breathing scale and solar halo split
+        bloom_steady = self.states(2000, "bloom_wave", jump=10, seed=42)
+        self.assertTrue(all(s.split >= 1.5 for s in bloom_steady))
+        self.assertTrue(all(s.y < 0 for s in bloom_steady))
+        self.assertTrue(any(s.scale > 1.02 for s in bloom_steady))
+        self.assertEqual(bloom_steady, self.states(2000, "bloom_wave", jump=10, seed=42))
+
+        # Exit states: corrosion dragging fall vs bloom ascending sublimation
+        corrosion_exit = self.states(4200, "corrosion_wave", jump=10, seed=42)
+        self.assertTrue(any(s.split >= 2.5 for s in corrosion_exit))
+        bloom_exit = self.states(4200, "bloom_wave", jump=10, seed=42)
+        self.assertTrue(all(s.y < 0 for s in bloom_exit))
+        self.assertTrue(any(s.scale > 1.05 for s in bloom_exit))
+
+        # Zero jump contract: completely static baseline
+        c_zero = self.states(2000, "corrosion_wave", jump=0)
+        b_zero = self.states(2000, "bloom_wave", jump=0)
+        self.assertTrue(all(s.split == 0 and s.x == g.x and s.y == g.baseline and s.scale == 1.0
+                            for s, g in zip(c_zero, self.glyphs)))
+        self.assertTrue(all(s.split == 0 and s.x == g.x and s.y == g.baseline and s.scale == 1.0
+                            for s, g in zip(b_zero, self.glyphs)))
 
 
 class AnimatedDrawingTests(unittest.TestCase):
