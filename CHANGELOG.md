@@ -2,6 +2,40 @@
 
 每次改动按日期追加记录，包含改动目的、涉及文件、测试与验证结果、影响或已知限制。
 
+## 2026-10-14：重构效果页面整体布局为边狱终端科技风并明确标注原作者与优化人
+
+### 改动
+
+- 响应用户关于“主要是布局不是很喜欢、页面重构要彻底、界面标明原作者后面写明优化人”的明确要求，进行深度布局重构与致谢信息强化：
+  1. **界面标明原作者与优化人 (`app_info.py`, `controls.py`)**：
+     - 在 `app_info.py` 中新增 `OPTIMIZER = "优化：css521 (优胜)"`，并严格保留原作者 `CREATOR = "创作者：Bilibili-鈴仙優昙華院因幡"`；
+     - 在控制面板侧边栏（`_build_sidebar`）中，于原作者与版本号之间醒目新增优化人标注：`优化：css521 (优胜)`，保证原作者致谢与优化人贡献清晰并存，且 100% 满足自动化测试对品牌标识与几何间距的断言。
+  2. **歌词效果页面布局彻底重构 (`controls.py`)**：
+     - 彻底改变此前将字体预览框（`FontPreview`）突兀夹在杂乱表单中下部的割裂设计，重构为层次分明的“边狱公司终端科技风（方案 A）”三大核心模块：
+       - **模块 1：效果舞台与预设方案 (`stage_card`)**：
+         - 整合为顶部“实时预览核心工作台”，上部紧凑排布预设方案下拉框与操作按键（另存为、更新、删除），配以轻量预设只读/修改状态说明；
+         - 将明暗预览背景切换与动画重播按键整合至舞台工具条；居中展示开阔的全画幅歌词动画实时预览舞台（`FontPreview`），并针对特殊主题引入四角战术科技十字刻度（tactical reticle HUD）；
+       - **模块 2：显示与文字外观 (`text_card`)**：
+         - 结构化整合显示屏幕、显示区域、歌词字体与导入、字号、纯色/白芯发光、白芯风格（标准/卡门）、颜色选择器、发光强度滑块、透明度、翻译偏好与但丁 PDA 终端通知；
+       - **模块 3：律动与动画动力学 (`motion_card`)**：
+         - 归集歌词动画预设（脑叶危险等级/E.G.O侵蚀/金枝绽放等）、入场/退场速度滑块、抖动频率、跌落距离、逐字演唱强调开关与状态、运动方式、振幅、倾角与时钟偏移。
+     - 优化滚动与窗口尺寸适应性，确保在 900×560 最小窗口下全部控件均 100% 可通过滚动无截断访问（`effects_scroll.ensureVisible`）。
+
+### 测试与验证
+
+- 自动化单元与文档测试：
+  - 运行 `.venv/bin/python -m unittest tests/test_core.py tests/test_workflow_docs.py tests/test_glyph_motion.py tests/test_text_effects.py tests/test_presets.py -v`：共 80 项自动测试全部通过（OK，skipped=1）；
+- 集成验证与烟雾检查：
+  - 运行 `.venv/bin/python main.py --smoke`：全部烟雾测试与视觉回归检查通过（`passed: true`，所有 11 种动画暖帧渲染 P95 均优于要求，`effect_controls_reachable_by_scrolling: true`，`unreachable_effect_controls: []`，`sidebar_branding_updated: true`，`both_theme_sidebars_fit_minimum_window: true`）；
+- 构建打包与提取：
+  - 运行 `.venv/bin/python tools/build_macos.py` 重新生成构建包；
+  - 执行 `ditto -x -k artifacts/mac-release/city-echoes-0.6.0-beta.2-macos.1-arm64.zip build/macos-dist` 将独立可执行 app 同步至 `build/macos-dist/`。
+
+### 影响与限制
+
+- 彻底解决了效果设置页面过长、预览与参数断层、表单杂乱的问题；
+- 界面视觉焦点集中在顶部实时舞台，调参动线流畅，边狱公司终端风格与黑金科技感高度契合。
+
 ## 2026-10-14：重构控制面板 UI 界面视觉设计与版面层次
 
 ### 改动

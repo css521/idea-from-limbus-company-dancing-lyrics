@@ -18,7 +18,7 @@ from text_effects import TEXT_EFFECTS
 from settings import resource_path, ANIMATION_STYLES
 from glyph_motion import glyph_states
 from presets import PresetStore, EFFECT_KEYS
-from app_info import APP_NAME, APP_VERSION, CREATOR, MOTTO, EFFECT_PREVIEW_TEXT
+from app_info import APP_NAME, APP_VERSION, CREATOR, OPTIMIZER, MOTTO, EFFECT_PREVIEW_TEXT
 from themes import theme_colors, theme_stylesheet, theme_palette, theme_accent, accent_text, ThemeFrame, ThemeCanvas
 
 
@@ -264,6 +264,18 @@ class FontPreview(QWidget):
         painter.setPen(QPen(border_col, 1))
         painter.setBrush(bg_col)
         painter.drawRoundedRect(QRectF(self.rect()).adjusted(.5, .5, -.5, -.5), 8, 8)
+        if theme == "special":
+            painter.setPen(QPen(QColor("#7d6542"), 1.2))
+            r = QRectF(self.rect()).adjusted(6, 6, -6, -6)
+            c = 10
+            painter.drawLine(QPointF(r.left(), r.top()), QPointF(r.left() + c, r.top()))
+            painter.drawLine(QPointF(r.left(), r.top()), QPointF(r.left(), r.top() + c))
+            painter.drawLine(QPointF(r.right(), r.top()), QPointF(r.right() - c, r.top()))
+            painter.drawLine(QPointF(r.right(), r.top()), QPointF(r.right(), r.top() + c))
+            painter.drawLine(QPointF(r.left(), r.bottom()), QPointF(r.left() + c, r.bottom()))
+            painter.drawLine(QPointF(r.left(), r.bottom()), QPointF(r.left(), r.bottom() - c))
+            painter.drawLine(QPointF(r.right(), r.bottom()), QPointF(r.right() - c, r.bottom()))
+            painter.drawLine(QPointF(r.right(), r.bottom()), QPointF(r.right(), r.bottom() - c))
         pixels = min(28, self.prefs.font_size)
         key = (self.width(), pixels, self.prefs.font_family, self.prefs.color, self.prefs.text_style, self.prefs.glow_variant,
                self.devicePixelRatioF(), self.prefs.animation_style, self.prefs.jump, self.prefs.fall_distance, self.prefs.singing_sync)
@@ -388,8 +400,10 @@ class ControlPanel(QWidget):
         brand.addWidget(label(APP_NAME, "brand"))
         body.addLayout(brand)
         self.creator_label = label(CREATOR.replace("：", "：\n", 1), "creator")
+        self.optimizer_label = label(OPTIMIZER.replace("：", "：\n", 1), "creator")
         self.version_label = label(f"版本 {APP_VERSION}", "version")
         body.addWidget(self.creator_label)
+        body.addWidget(self.optimizer_label)
         body.addWidget(self.version_label)
         body.addSpacing(24)
         self.navigation = QButtonGroup(self)
@@ -459,6 +473,8 @@ class ControlPanel(QWidget):
                              (self.lyrics_button, "lyrics"), (self.demo_button, "play"),
                              (self.visibility_button, "lyrics")):
             button.setIcon(symbol_icon(kind, color))
+        if hasattr(self, "replay_button"):
+            self.replay_button.setIcon(symbol_icon("play", color))
         self.volume_icon.setPixmap(symbol_icon("volume", color).pixmap(20, 20))
         self.import_button.setIcon(symbol_icon("import", accent_text(self.prefs.theme)))
         self.play_button.setIcon(symbol_icon("pause" if self.player.playing else "play", accent_text(self.prefs.theme)))
@@ -592,15 +608,20 @@ class ControlPanel(QWidget):
     def _build_effects_page(self):
         scroll, body = self._scroll_page()
         self.effects_scroll = scroll
-        body.addWidget(label("LYRIC EFFECTS", "eyebrow"))
-        body.addWidget(label("歌词效果", "heading"))
-        body.addWidget(label("调整文字与律动，让歌词融入你的桌面。设置会自动保存。", "muted"))
-        preset_card, preset_body = card("效果预设")
+        body.addWidget(label("LYRIC EFFECTS & LIVE STAGE", "eyebrow"))
+        heading_row = QHBoxLayout()
+        heading_row.addWidget(label("歌词效果与舞台", "heading"), 1)
+        body.addLayout(heading_row)
+        body.addWidget(label("调整文字材质、发光粒子与动力学律动；设置将立即生效并自动保存。", "muted"))
+
+        stage_card, stage_body = card("效果舞台与预设方案")
         self.preset_combo = QComboBox()
         self.preset_combo.setAccessibleName("效果预设")
         self.preset_combo.currentIndexChanged.connect(lambda _: self.apply_preset(self.preset_combo.currentData()))
-        preset_body.addWidget(self.preset_combo)
+        stage_body.addWidget(self.preset_combo)
+
         preset_actions = QHBoxLayout()
+        preset_actions.setSpacing(10)
         self.preset_save_button = QPushButton("另存为预设")
         self.preset_update_button = QPushButton("更新当前预设")
         self.preset_delete_button = QPushButton("删除")
@@ -610,12 +631,38 @@ class ControlPanel(QWidget):
         for button in (self.preset_save_button, self.preset_update_button, self.preset_delete_button):
             button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             preset_actions.addWidget(button)
-        preset_body.addLayout(preset_actions)
+        preset_actions.addStretch(1)
+        stage_body.addLayout(preset_actions)
+
         self.preset_status = label("内置方案只读；可另存为自己的方案。", "muted")
         self.preset_status.setWordWrap(True)
-        preset_body.addWidget(self.preset_status)
-        body.addWidget(preset_card)
+        stage_body.addWidget(self.preset_status)
+
+        self.font_preview = FontPreview(self.prefs)
+        self.replay_button = QPushButton("重播动画")
+        self.replay_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.replay_button.setToolTip("循环预览入场、停留和退场，不改变音乐播放。")
+        self.replay_button.setIcon(symbol_icon("play", accent_text(self.prefs.theme)))
+        self.replay_button.clicked.connect(self.font_preview.replay)
+
+        self.preview_background = QComboBox()
+        self.preview_background.addItem("深色背景", True)
+        self.preview_background.addItem("浅色背景", False)
+        self.preview_background.setFixedWidth(120)
+        self.preview_background.currentIndexChanged.connect(lambda _: self.font_preview.set_background(self.preview_background.currentData()))
+
+        stage_toolbar = QHBoxLayout()
+        stage_toolbar.setContentsMargins(0, 10, 0, 0)
+        stage_toolbar.setSpacing(10)
+        stage_toolbar.addWidget(label("实时效果预览", "section"), 1)
+        stage_toolbar.addWidget(self.preview_background)
+        stage_toolbar.addWidget(self.replay_button)
+        stage_body.addLayout(stage_toolbar)
+        stage_body.addWidget(self.font_preview)
+
+        body.addWidget(stage_card)
         self._reload_presets()
+
         self.screen_combo = QComboBox()
         self.screen_combo.setAccessibleName("显示屏幕")
         self._reload_screens()
@@ -724,15 +771,6 @@ class ControlPanel(QWidget):
         self.import_font_button.clicked.connect(lambda: self.import_font())
         font_row.addWidget(self.font_combo, 1)
         font_row.addWidget(self.import_font_button)
-        self.font_preview = FontPreview(self.prefs)
-        self.replay_button = QPushButton("重播动画")
-        self.replay_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.replay_button.setToolTip("循环预览入场、停留和退场，不改变音乐播放。")
-        self.replay_button.clicked.connect(self.font_preview.replay)
-        self.preview_background = QComboBox()
-        self.preview_background.addItem("深色背景", True)
-        self.preview_background.addItem("浅色背景", False)
-        self.preview_background.currentIndexChanged.connect(lambda _: self.font_preview.set_background(self.preview_background.currentData()))
         self.font_status = label(self._font_message or ("部分导入字体无法加载，可重新导入。" if self.font_library.errors else
                                  "支持 TTF、OTF、TTC；选择后立即生效并自动保存。"), "muted")
         self.font_status.setWordWrap(True)
@@ -746,43 +784,66 @@ class ControlPanel(QWidget):
         self.pda_checkbox.toggled.connect(lambda value: self._set_preference("pda_banner", value))
         self._reload_fonts()
         self.font_combo.currentIndexChanged.connect(self._font_selected)
-        for title, fields in (
-            ("显示与文字", (("显示屏幕", self.screen_combo), ("显示区域", self.region), ("歌词字体", font_field), ("文字样式", self.text_style),
-                          ("发光风格", self.glow_variant),
-                          ("文字大小", self.spins["font_size"]),
-                          (self.color_label, self.color_button), ("发光强度", self.glow_field),
-                          ("歌词透明度", self.spins["opacity"]), ("歌词语言", self.translation_checkbox),
-                          ("切歌通知", self.pda_checkbox))),
-            ("律动与同步", (("歌词动画", self.animation_combo),
-                          ("入场速度", self.parameter_fields["entry_speed"]), ("退场速度", self.parameter_fields["exit_speed"]),
-                          ("抖动频率", self.parameter_fields["shake_frequency"]), ("跌落距离（32px 字号）", self.parameter_fields["fall_distance"]),
-                          ("预览背景", self.preview_background), ("效果预览", self.font_preview), ("动画预览", self.replay_button),
-                          ("逐字演唱同步", self.singing_checkbox), ("歌曲逐字时间", self.word_status),
-                          ("运动方式", self.motion), ("律动幅度", self.spins["jump"]),
-                          ("倾斜范围", self.spins["angle"]), ("同步偏移", self.spins["delay_ms"]))),
-        ):
-            section, section_body = card(title)
-            form = QFormLayout()
-            form.setHorizontalSpacing(24)
-            form.setVerticalSpacing(16)
-            form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
-            form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-            for text, widget in fields:
-                widget.setMaximumWidth(460)
-                form.addRow(text, widget)
-            section_body.addLayout(form)
-            if title == "显示与文字":
-                section_body.addWidget(self.white_hint)
-                section_body.addWidget(self.font_status)
-            if title == "律动与同步":
-                singing_hint = label("预览使用演示时间；歌曲需提供真实逐字时间，无数据时保留原动画。", "muted")
-                singing_hint.setWordWrap(True)
-                section_body.addWidget(singing_hint)
-                hint = label("速度 100% 为原有效果；数值越高越快。短句会自动压缩动画时长。", "muted")
-                hint.setWordWrap(True)
-                section_body.addWidget(hint)
-                section_body.addWidget(label("偏移为正：歌词晚一点出现；为负：早一点出现。", "muted"))
-            body.addWidget(section)
+
+        text_card, text_body = card("显示与文字外观")
+        text_form = QFormLayout()
+        text_form.setHorizontalSpacing(24)
+        text_form.setVerticalSpacing(16)
+        text_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        text_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        text_fields = (
+            ("显示屏幕", self.screen_combo),
+            ("显示区域", self.region),
+            ("歌词字体", font_field),
+            ("文字大小", self.spins["font_size"]),
+            ("文字样式", self.text_style),
+            ("发光风格", self.glow_variant),
+            (self.color_label, self.color_button),
+            ("发光强度", self.glow_field),
+            ("歌词透明度", self.spins["opacity"]),
+            ("歌词语言", self.translation_checkbox),
+            ("切歌通知", self.pda_checkbox),
+        )
+        for text, widget in text_fields:
+            widget.setMaximumWidth(460)
+            text_form.addRow(text, widget)
+        text_body.addLayout(text_form)
+        text_body.addWidget(self.white_hint)
+        text_body.addWidget(self.font_status)
+        body.addWidget(text_card)
+
+        motion_card, motion_body = card("律动与动画动力学")
+        motion_form = QFormLayout()
+        motion_form.setHorizontalSpacing(24)
+        motion_form.setVerticalSpacing(16)
+        motion_form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
+        motion_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        motion_fields = (
+            ("歌词动画", self.animation_combo),
+            ("入场速度", self.parameter_fields["entry_speed"]),
+            ("退场速度", self.parameter_fields["exit_speed"]),
+            ("抖动频率", self.parameter_fields["shake_frequency"]),
+            ("跌落距离（32px 字号）", self.parameter_fields["fall_distance"]),
+            ("逐字演唱同步", self.singing_checkbox),
+            ("歌曲逐字时间", self.word_status),
+            ("运动方式", self.motion),
+            ("律动幅度", self.spins["jump"]),
+            ("倾斜范围", self.spins["angle"]),
+            ("同步偏移", self.spins["delay_ms"]),
+        )
+        for text, widget in motion_fields:
+            widget.setMaximumWidth(460)
+            motion_form.addRow(text, widget)
+        motion_body.addLayout(motion_form)
+        singing_hint = label("预览使用演示时间；歌曲需提供真实逐字时间，无数据时保留原动画。", "muted")
+        singing_hint.setWordWrap(True)
+        motion_body.addWidget(singing_hint)
+        hint = label("速度 100% 为原有效果；数值越高越快。短句会自动压缩动画时长。", "muted")
+        hint.setWordWrap(True)
+        motion_body.addWidget(hint)
+        motion_body.addWidget(label("偏移为正：歌词晚一点出现；为负：早一点出现。", "muted"))
+        body.addWidget(motion_card)
+
         body.addStretch(1)
         self._update_effect_controls()
         return scroll

@@ -8,6 +8,7 @@ APP_NAME = "都市回响"
 EFFECT_PREVIEW_TEXT = "啊，对了！但丁。有一天，去一趟图书馆吧。"
 WINDOWS_APP_ID = "FloatingLyrics.Desktop"
 CREATOR = "创作者：Bilibili-鈴仙優昙華院因幡"
+OPTIMIZER = "优化：css521 (优胜)"
 MOTTO = "FACE THE SIN. SAVE THE E.G.O"
 
 
