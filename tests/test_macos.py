@@ -524,6 +524,63 @@ class MacPlayerTests(unittest.TestCase):
         self.player._tick()
         self.assertIs(self.documents[-1], doc_b)
 
+    def test_calibrate_qqmusic_position_handles_errors_and_parses_elapsed_ms(self):
+        # 1. 非 darwin 平台直接返回 0
+        with patch("macos_netease.sys", SimpleNamespace(platform="win32")):
+            self.assertEqual(mac.calibrate_qqmusic_position("some-cli"), 0)
+
+        # 2. 未找到 cli 直接返回 0
+        with patch("macos_netease.find_nowplaying_cli", return_value=None):
+            self.assertEqual(mac.calibrate_qqmusic_position(None), 0)
+
+        # 3. subprocess 失败或异常时优雅回退返回 0
+        with patch("macos_netease.subprocess.run", side_effect=Exception("mock error")):
+            self.assertEqual(mac.calibrate_qqmusic_position("dummy-cli"), 0)
+
+        # 4. 正常执行时解析返回毫秒数
+        def mock_run(cmd, *args, **kwargs):
+            if "get-raw" in cmd:
+                return SimpleNamespace(returncode=0, stdout=json.dumps({"kMRMediaRemoteNowPlayingInfoElapsedTime": 68.5}))
+            return SimpleNamespace(returncode=0, stdout="")
+
+        with patch("macos_netease.subprocess.run", side_effect=mock_run):
+            self.assertEqual(mac.calibrate_qqmusic_position("dummy-cli"), 68500)
+
+    def test_qqmusic_initial_mid_playback_calibrates_and_jumps_position(self):
+        # 验证音乐正在后台播放（position_ms=0）时打开 App，自动校准并跳转到真实进度
+        snap = mac.NowPlaying("playing", "晴天", "周杰伦", 240000, 0, rate=1.0, bundle="com.tencent.QQMusicMac")
+        calls = []
+        def mock_calibrator(cli):
+            calls.append(cli)
+            return 85000
+
+        clock = [10.0]
+        p = mac.MacNeteasePlayer(
+            autostart=False,
+            query=lambda: snap,
+            clock=lambda: clock[0],
+            qqmusic_calibrator=mock_calibrator
+        )
+        try:
+            # 首次捕获（打开 App 时）：检测到歌曲已在播放且 position_ms 为 0，触发自动校准
+            captured_info, captured_at = p._capture()
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(captured_info.position_ms, 85000)
+
+            # apply 应用该播放信息，基准时钟锚定到 85000ms
+            p.apply(captured_info, captured=captured_at)
+            self.assertTrue(p.connected)
+            self.assertTrue(p.playing)
+            self.assertEqual(p.position(), 85000)
+
+            # 后续正常心跳循环中，不会重复触发校准脉冲
+            clock[0] = 12.0
+            next_info, next_at = p._capture()
+            self.assertEqual(len(calls), 1)  # 保持 1，未重复调用
+            self.assertEqual(p.position(), 87000)  # 85000 + (12.0 - 10.0)*1000
+        finally:
+            p.stop()
+
     def test_screen_selection_and_overlay_binding(self):
         from overlay import LyricsOverlay
         from settings import Preferences, SettingsStore

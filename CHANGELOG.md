@@ -2,6 +2,37 @@
 
 每次改动按日期追加记录，包含改动目的、涉及文件、测试与验证结果、影响或已知限制。
 
+## 2026-10-20：解决音乐正在播放中途打开 App 时歌词未自动跳转至当前进度的问题
+
+### 改动
+
+- 响应用户反馈的“如果音乐正在播放时候打开app 这个时候歌词不会自动跳转”的问题：
+  1. **问题根因定位**：
+     - QQ 音乐 Mac 客户端向 macOS 系统 `MediaRemote` 服务上报的 `kMRMediaRemoteNowPlayingInfoElapsedTime` 在自然连续顺播期间固定滞后为 `0`（QQ 音乐仅在用户手动切歌或拖动滑块时才会重新向系统投递当前时间）；
+     - 当音乐已在后台播放中途启动本应用时，`MacNeteasePlayer` 检测到歌曲变更（首次连接）且读取到的 `position_ms` 为 `0`，导致本地基准时钟被锚定在 `0ms`（`_anchor = 0`），歌词与控制面板从 00:00 第一句开始渲染，无法自动跳转至实际正在唱的段落。
+  2. **新增后台启动自适应进度校准机制 (`macos_netease.py`)**：
+     - 新增 `calibrate_qqmusic_position(cli=None)` 模块函数：通过约 40ms 的无感知极微播放脉冲，促使 QQ 音乐内部音频引擎主动刷新其实际播放时间至系统 `MediaRemote`；
+     - 在 `MacNeteasePlayer._capture()` 中增加自适应校准判定：当且仅当 App 初次建立连接或启动发现 QQ 音乐正在播放且 `position_ms == 0` 时，自动执行一次非阻塞进度校准，将 `info.position_ms` 校正为真实已播放毫秒数；
+     - `apply(info)` 接收到校准后的毫秒数后，基准时间 `_anchor` 精准锚定在当前实际进度，并触发 `discontinuity` 信号使桌面歌词与控制面板进度条瞬间自动跳转至当前正在唱的歌词行；
+     - 在自然顺播或后续心跳轮询中，校准器绝不重复触发，保证正常听歌流畅无感。
+
+### 测试与验证
+
+- 自动化单元与平台测试：
+  - 在 `tests/test_macos.py` 中新增 `test_calibrate_qqmusic_position_handles_errors_and_parses_elapsed_ms` 与 `test_qqmusic_initial_mid_playback_calibrates_and_jumps_position`；
+  - 运行 `.venv/bin/python -m unittest tests/test_macos.py -v`：共 46 项测试全部通过（OK）；
+  - 运行核心与文档校验 `.venv/bin/python -m unittest tests/test_core.py tests/test_workflow_docs.py -v`：全部通过（OK，skipped=1）；
+- 集成验证与烟雾检查：
+  - 运行 `.venv/bin/python main.py --smoke`：全量烟雾测试通过（`passed: true`）；
+- 构建打包：
+  - 运行 `tools/build_macos.py` 重新生成打包发布归档；
+  - 产物写入 `build/macos-archive/city-echoes-0.6.0-beta.2-macos.1-arm64.zip` 并完成结构审计。
+
+### 影响与限制
+
+- 彻底解决了音乐正在播放时打开 App 歌词停留在 00:00 开头的问题；
+- 打开 App 后，歌词和控制面板进度条立即自动跳转定位到当前正在播放的几分几秒。
+
 ## 2026-10-20：彻底解决 macOS 下 QQ 音乐与外部网页或音频同时播放时的冲突与乱跳问题
 
 ### 改动

@@ -245,6 +245,33 @@ def query_nowplaying(cli, allowed_bundles=None, qqmusic_state_func=get_mac_qqmus
                            qqmusic_state_func=qqmusic_state_func)
 
 
+def calibrate_qqmusic_position(cli=None):
+    """当 QQ 音乐正在后台播放而此时启动本应用时，
+    QQ 音乐向系统 MediaRemote 上报的 ElapsedTime 通常滞后停留在 0。
+    通过极微瞬时的无感知播放脉冲触发 QQ 音乐刷新其实际播放时间，
+    使刚打开应用时歌词能够准确自动跳转到当前实际进度。
+    """
+    if sys.platform != "darwin":
+        return 0
+    resolved_cli = cli or find_nowplaying_cli()
+    if not resolved_cli:
+        return 0
+    try:
+        subprocess.run([resolved_cli, "pause"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=1.2)
+        time.sleep(0.04)
+        subprocess.run([resolved_cli, "play"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=1.2)
+        time.sleep(0.06)
+        res = subprocess.run([resolved_cli, "get-raw"], capture_output=True, text=True, timeout=1.5)
+        if res.returncode == 0 and res.stdout.strip() and res.stdout.strip() != "null":
+            data = json.loads(res.stdout)
+            val = data.get("kMRMediaRemoteNowPlayingInfoElapsedTime")
+            if val is not None:
+                return int(float(val) * 1000)
+    except Exception as error:
+        logger.debug("calibrate_qqmusic_position failed: %s", error)
+    return 0
+
+
 def is_mac_bundle_audio_running(target_bundle):
     if sys.platform != "darwin" or not target_bundle:
         return None
@@ -561,7 +588,7 @@ class MacNeteasePlayer(QObject):
 
     def __init__(self, parent=None, *, query=None, loader=load_song_lyrics, clock=time.monotonic,
                  executor=None, autostart=True, source_mode="auto", cache_directory="", cache_reader=None,
-                 audio_running=None, qqmusic_state=None):
+                 audio_running=None, qqmusic_state=None, qqmusic_calibrator=None):
         super().__init__(parent)
         self.cli = find_nowplaying_cli() if query is None else None
         self.source_mode = source_mode
@@ -573,6 +600,8 @@ class MacNeteasePlayer(QObject):
             allowed = NETEASE_BUNDLES
         self._allowed_bundles = allowed
         self._qqmusic_state = qqmusic_state or get_mac_qqmusic_playback_state
+        self._qqmusic_calibrator = qqmusic_calibrator or calibrate_qqmusic_position
+        self._calibrated = False
         self._query = query or (lambda: query_nowplaying(self.cli, allowed_bundles=self._allowed_bundles,
                                                         qqmusic_state_func=self._qqmusic_state))
         self._loader, self._clock = loader, clock
@@ -678,6 +707,23 @@ class MacNeteasePlayer(QObject):
     def _capture(self):
         info = self._query()
         now = self._clock()
+        if (
+            info is not None
+            and getattr(info, "bundle", "") in QQMUSIC_BUNDLES
+            and info.state == "playing"
+            and info.position_ms == 0
+            and not self.song_id
+            and not self._calibrated
+        ):
+            self._calibrated = True
+            calibrator = getattr(self, "_qqmusic_calibrator", calibrate_qqmusic_position)
+            if calibrator:
+                calibrated_ms = calibrator(self.cli)
+                if calibrated_ms > 0:
+                    if info.duration_ms > 0:
+                        calibrated_ms = min(calibrated_ms, info.duration_ms)
+                    info = replace(info, position_ms=calibrated_ms)
+
         if info is None and (self.is_qqmusic or self.source_mode in ("qqmusic", "auto")):
             ui_func = getattr(self, "_qqmusic_ui_func", query_mac_qqmusic_ui)
             ui_data = ui_func() if ui_func else None
@@ -800,6 +846,7 @@ class MacNeteasePlayer(QObject):
                 self._lyrics_job = None
                 self._needs_lyrics = self.lyrics_received = False
                 self.song_id = ""
+                self._calibrated = False
                 self.status = f"等待{self.source_short}播放；请确认它是系统当前播放来源。"
                 self.lyric_status = f"等待{self.source_short}歌词"
                 self.document_changed.emit(None)
