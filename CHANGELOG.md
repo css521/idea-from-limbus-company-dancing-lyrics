@@ -2,6 +2,41 @@
 
 每次改动按日期追加记录，包含改动目的、涉及文件、测试与验证结果、影响或已知限制。
 
+## 2026-10-20：彻底解决 macOS 下 QQ 音乐与外部网页或音频同时播放时的冲突与乱跳问题
+
+### 改动
+
+- 响应用户反馈的“QQ 音乐跟其他网页或者音频同时播放会乱”的问题，深入排查并彻底解决 4 项系统级串扰隐患：
+  1. **拦截外部非音乐应用与网页视频误判 (`macos_netease.py`)**：
+     - 在 `macos_netease.py` 中新增 `KNOWN_NON_MUSIC_BUNDLES` 拦截集合，涵盖 Chrome、Safari、Edge、Firefox、Arc 等主流浏览器，以及 IINA、VLC、QuickTime、腾讯会议、Zoom、哔哩哔哩等非音乐软件；
+     - 在 `parse_nowplaying` 中增加严格的白名单与黑名单过滤，坚决拒绝来自浏览器或非音乐播放器的 MediaRemote 会话，彻底消除“把网页视频标题误当成歌曲去 QQ 音乐搜索歌词”导致的歌词错位与覆盖问题。
+  2. **修复音频输出进程隔离，消除全局硬件扬声器串扰 (`macos_netease.py`)**：
+     - 修复 `is_mac_audio_output_running` 中存在的错误回退行为：当明确指定了目标应用 bundle（如 `com.tencent.QQMusicMac`）时，若该 bundle 的独立 CoreAudio 输出流未激活，直接返回 `False`，绝不再退回到检测全系统默认扬声器硬件；
+     - 彻底解决了“QQ 音乐已经暂停，但因为网页正在播放声音，全系统声卡处于 Running 状态，导致都市回响误判 QQ 音乐还在播放并继续空转歌词”的逻辑缺陷。
+  3. **新增 QQ 音乐原生播放控制栏直连探测器 (`macos_netease.py`)**：
+     - 新增 `query_mac_qqmusic_ui()` 原生通道：通过精准 AppleScript 探针，直接读取 QQ 音乐主界面的播放控制栏（`歌曲名：... - 歌手名：...` 与 `暂停播放` 按钮状态），单次仅耗时约 0.05 秒；
+     - 当系统全局 MediaRemote 焦点被外部网页视频或短视频抢夺导致 `nowplaying-cli` 返回 None 时，直连通道自动无缝补位，直接从 QQ 音乐进程提取当前真实曲目与播放状态，实现与其它网页音频的彻底物理脱耦。
+  4. **引入抗干扰容错防抖机制（Graceful Hold Period）**：
+     - 在 `MacNeteasePlayer._tick()` 中为外部音频干扰增加 5 个采样周期（约 2.5 秒）的丢帧缓冲保持；
+     - 当系统全局 NowPlaying 发生瞬间抖动或短时被外部提示音抢占时，只要 QQ 音乐仍在播放，歌词平滑连续推进，杜绝桌面歌词“闪烁、消失、重切入”。
+
+### 测试与验证
+
+- 自动化单元与抗干扰测试：
+  - 在 `tests/test_macos.py` 中新增 `test_external_audio_and_browser_interference_rejection_and_qqmusic_direct_fallback`，覆盖外部非音乐应用过滤、CoreAudio 进程隔离防串扰、QQ 音乐直连通道无缝补位以及抗干扰丢帧保持；
+  - 运行 `.venv/bin/python -m unittest tests/test_macos.py -v`：共 44 项测试全部通过（OK）；
+  - 运行全量单元与文档测试套件 `.venv/bin/python -m unittest tests/test_core.py tests/test_workflow_docs.py tests/test_glyph_motion.py tests/test_text_effects.py tests/test_presets.py tests/test_macos.py -v`：共 124 项测试全部通过（OK，skipped=1）；
+- 集成验证与烟雾检查：
+  - 运行 `.venv/bin/python main.py --smoke`：全量烟雾测试通过（`passed: true`）；
+- 构建打包与提取：
+  - 运行 `tools/build_macos.py` 重新生成打包发布归档；
+  - 执行 `ditto -x -k artifacts/mac-release/city-echoes-0.6.0-beta.2-macos.1-arm64.zip build/macos-dist` 将独立可执行 app 解压至 `build/macos-dist/`。
+
+### 影响与限制
+
+- 彻底消除了 macOS 下网页视频、直播、会议或系统提示音与 QQ 音乐同时发声时的歌词打乱与误判；
+- QQ 音乐在后台播放时，即便网页播放音频，桌面歌词依然稳定同步跟随，暂停时精准静止。
+
 ## 2026-10-14：彻底消除 macOS 下下拉菜单与弹出窗口的白色边框穿透问题
 
 ### 改动

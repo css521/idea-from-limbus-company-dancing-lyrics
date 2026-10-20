@@ -848,6 +848,68 @@ class MacPlatformTests(unittest.TestCase):
                 overlay.deleteLater()
                 player.stop()
 
+    def test_external_audio_and_browser_interference_rejection_and_qqmusic_direct_fallback(self):
+        # 1. 验证非音乐软件（浏览器、会议、视频播放器等）在 parse_nowplaying 中被严格拒绝
+        for non_music_bundle in ("com.google.Chrome", "com.apple.Safari", "com.microsoft.edgemac",
+                                 "com.tencent.meeting", "com.colliderli.iina", "com.bilibili.mac"):
+            bad_data = {
+                "bundleIdentifier": non_music_bundle,
+                "kMRMediaRemoteNowPlayingInfoTitle": "网页测试视频",
+                "kMRMediaRemoteNowPlayingInfoArtist": "UP主",
+                "kMRMediaRemoteNowPlayingInfoDuration": 300,
+                "kMRMediaRemoteNowPlayingInfoElapsedTime": 10,
+                "kMRMediaRemoteNowPlayingInfoPlaybackRate": 1.0,
+            }
+            self.assertIsNone(mac.parse_nowplaying(bad_data))
+
+        # 2. 验证针对目标 bundle 查询时，未激活音频流时不回退到全局硬件扬声器
+        with patch.object(mac, "is_mac_bundle_audio_running", return_value=None):
+            # 即使硬件扬声器处于运行态，只要指定了 bundle 且未命中，必须返回 False
+            self.assertFalse(mac.is_mac_audio_output_running("com.tencent.QQMusicMac"))
+
+        # 3. 验证当 nowplaying-cli 返回 None 或被外部音频抢占时，QQ 音乐直连回退通道自动无缝补位
+        mock_ui = lambda: {"title": "晴天", "artist": "周杰伦", "state": "playing", "bundle": "com.tencent.QQMusicMac"}
+        player = mac.MacNeteasePlayer(query=lambda: None, autostart=False, source_mode="qqmusic")
+        try:
+            player._qqmusic_ui_func = mock_ui
+            captured_info, _ = player._capture()
+            self.assertIsNotNone(captured_info)
+            self.assertEqual(captured_info.title, "晴天")
+            self.assertEqual(captured_info.artist, "周杰伦")
+            self.assertEqual(captured_info.state, "playing")
+            self.assertEqual(captured_info.bundle, "com.tencent.QQMusicMac")
+        finally:
+            player.stop()
+
+        # 4. 验证当已连接音乐时，外部干扰短暂丢帧（<=5 tick）且音乐仍存活时，_tick() 不会立即断开闪退
+        docs = []
+        clock = [10.0]
+        player = mac.MacNeteasePlayer(query=lambda: None, autostart=False, clock=lambda: clock[0], audio_running=lambda *_: True)
+        try:
+            player.document_changed.connect(docs.append)
+            # 先建立正常播放状态
+            player.apply(mac.NowPlaying("playing", "晴天", "周杰伦", 240000, 10000, rate=1.0, bundle="com.tencent.QQMusicMac"))
+            self.assertTrue(player.connected)
+            self.assertTrue(player.playing)
+
+            # 模拟系统 nowplaying 临时返回 None，但 QQ 音乐仍存活
+            player._is_music_client_alive = lambda: True
+            player._poll_future = Future()
+            player._poll_future.set_result((None, clock[0]))
+            player._tick()
+            # 容错保持生效：未调用 apply(None)，依然处于 connected 态
+            self.assertTrue(player.connected)
+            self.assertEqual(player._interference_ticks, 1)
+
+            # 模拟外部音频消失，QQ 音乐重新被检测到
+            player._poll_future = Future()
+            player._poll_future.set_result((mac.NowPlaying("playing", "晴天", "周杰伦", 240000, 11000, rate=1.0, bundle="com.tencent.QQMusicMac"), clock[0]))
+            player._tick()
+            self.assertTrue(player.connected)
+            self.assertEqual(player._interference_ticks, 0)
+        finally:
+            player.stop()
+
 
 if __name__ == "__main__":
     unittest.main()

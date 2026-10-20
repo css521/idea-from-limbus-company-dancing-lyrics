@@ -75,6 +75,15 @@ NETEASE_BUNDLES = ("com.netease.163music", "com.netease.cloudmusic")
 QQMUSIC_BUNDLES = ("com.tencent.QQMusicMac",)
 ALLOWED_BUNDLES = NETEASE_BUNDLES + QQMUSIC_BUNDLES
 
+KNOWN_NON_MUSIC_BUNDLES = (
+    "com.google.Chrome", "com.google.Chrome.canary", "com.apple.Safari",
+    "com.microsoft.edgemac", "org.mozilla.firefox", "com.brave.Browser",
+    "com.operasoftware.Opera", "com.vivaldi.Vivaldi", "company.thebrowser.Browser",
+    "com.tencent.meeting", "us.zoom.xos", "com.microsoft.teams", "com.microsoft.teams2",
+    "com.apple.QuickTimePlayerX", "com.colliderli.iina", "org.videolan.vlc",
+    "com.bilibili.mac", "com.apple.WebKit.GPU", "com.apple.WebKit.WebContent",
+)
+
 
 @dataclass(frozen=True)
 class NowPlaying:
@@ -143,6 +152,8 @@ def parse_nowplaying(data, allowed_bundles=None, qqmusic_state_func=None):
               or data.get("kMRMediaRemoteNowPlayingInfoBundleIdentifier")
               or data.get("kMRNowPlayingClientUserInfoBundleIdentifier")
               or data.get("kMRMediaRemoteNowPlayingInfoClientBundleIdentifier"))
+    if bundle and bundle in KNOWN_NON_MUSIC_BUNDLES:
+        return None
     allowed = ALLOWED_BUNDLES if allowed_bundles is None else allowed_bundles
     if bundle and bundle not in allowed:
         return None
@@ -165,6 +176,62 @@ def parse_nowplaying(data, allowed_bundles=None, qqmusic_state_func=None):
     return NowPlaying(state, title.strip(), artist.strip(),
                       duration, min(position, duration) if duration else position, rate=rate,
                       album=str(album).strip(), bundle=str(bundle or ""))
+
+
+def query_mac_qqmusic_ui():
+    """直接从 QQ 音乐主界面的播放控制栏读取当前播放曲目与状态。
+    当系统 MediaRemote 被网页或其它视频音频应用夺取焦点时，此直连通道不受任何外部媒体干扰。
+    """
+    if sys.platform != "darwin":
+        return None
+    script = (
+        'tell application "System Events"\n'
+        '  if not (exists process "QQMusic") then return ""\n'
+        '  tell process "QQMusic"\n'
+        '    try\n'
+        '      repeat with w in every window\n'
+        '        repeat with elem in UI elements of w\n'
+        '          if description of elem is "播放控制栏" then\n'
+        '            set sTrack to ""\n'
+        '            set sState to "paused"\n'
+        '            repeat with se in UI elements of elem\n'
+        '              set d to description of se as string\n'
+        '              if d starts with "歌曲名：" then\n'
+        '                set sTrack to d\n'
+        '              else if d is "暂停播放" then\n'
+        '                set sState to "playing"\n'
+        '              end if\n'
+        '            end repeat\n'
+        '            if sTrack is not "" then\n'
+        '              return sTrack & "||" & sState\n'
+        '            end if\n'
+        '          end if\n'
+        '        end repeat\n'
+        '      end repeat\n'
+        '    end try\n'
+        '  end tell\n'
+        'end tell\n'
+        'return ""'
+    )
+    try:
+        res = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=0.8)
+        out = res.stdout.strip()
+        if not out or "||" not in out:
+            return None
+        track_part, state_str = out.split("||", 1)
+        m = re.match(r"歌曲名：(.*?) - 歌手名：(.*)", track_part)
+        if m:
+            title = m.group(1).strip()
+            artist = m.group(2).strip()
+            return {
+                "title": title,
+                "artist": artist,
+                "state": "playing" if state_str == "playing" else "paused",
+                "bundle": "com.tencent.QQMusicMac"
+            }
+    except Exception:
+        pass
+    return None
 
 
 def query_nowplaying(cli, allowed_bundles=None, qqmusic_state_func=get_mac_qqmusic_playback_state):
@@ -226,6 +293,9 @@ def is_mac_audio_output_running(bundle=None):
         proc_running = is_mac_bundle_audio_running(bundle)
         if proc_running is not None:
             return proc_running
+        # 修复：若明确指定了 bundle 但未匹配到该进程音频流，绝不能回退到全系统默认硬件扬声器
+        # 否则会被后台网页、视频或系统音效等其它音频严重串扰误判
+        return False
     try:
         import ctypes
         coreaudio = ctypes.CDLL("/System/Library/Frameworks/CoreAudio.framework/CoreAudio")
@@ -532,6 +602,8 @@ class MacNeteasePlayer(QObject):
         self._info = None
         self._next_poll = self._retry_at = 0
         self._needs_lyrics = self._closed = False
+        self._qqmusic_ui_func = query_mac_qqmusic_ui
+        self._interference_ticks = 0
         self.timer = QTimer(self)
         self.timer.setInterval(100)
         self.timer.timeout.connect(self._tick)
@@ -604,7 +676,42 @@ class MacNeteasePlayer(QObject):
         return self._loader
 
     def _capture(self):
-        return self._query(), self._clock()
+        info = self._query()
+        now = self._clock()
+        if info is None and (self.is_qqmusic or self.source_mode in ("qqmusic", "auto")):
+            ui_func = getattr(self, "_qqmusic_ui_func", query_mac_qqmusic_ui)
+            ui_data = ui_func() if ui_func else None
+            if ui_data:
+                title = ui_data["title"]
+                artist = ui_data["artist"]
+                state = ui_data["state"]
+                rate = 1.0 if state == "playing" else 0.0
+                if self.title == title and self.artist == artist:
+                    duration = self.duration
+                    pos = self.position()
+                    album = getattr(self._info, "album", "") if self._info else ""
+                else:
+                    duration = 0
+                    pos = 0
+                    album = ""
+                info = NowPlaying(state, title, artist, duration, pos, rate=rate,
+                                  album=album, bundle="com.tencent.QQMusicMac")
+        return info, now
+
+    def _is_music_client_alive(self):
+        if self.is_qqmusic:
+            if hasattr(self, "_qqmusic_state") and self._qqmusic_state:
+                st = self._qqmusic_state()
+                if st is not None:
+                    return st
+            audio_func = getattr(self, "_audio_running", is_mac_audio_output_running)
+            try:
+                running = audio_func("com.tencent.QQMusicMac")
+                if running:
+                    return True
+            except Exception:
+                pass
+        return False
 
     def _tick(self):
         if self._closed:
@@ -613,12 +720,21 @@ class MacNeteasePlayer(QObject):
         if self._poll_future is not None and self._poll_future.done():
             try:
                 info, captured = self._poll_future.result()
-                self.apply(info, captured)
+                if info is None and self.connected:
+                    if self._interference_ticks < 5 and self._is_music_client_alive():
+                        self._interference_ticks += 1
+                    else:
+                        self._interference_ticks = 0
+                        self.apply(None)
+                else:
+                    self._interference_ticks = 0
+                    self.apply(info, captured)
             except Exception as error:
                 logger.warning("Now Playing read failed: %s", error)
-                self.apply(None)
-                self.status = "读取系统播放信息失败，请检查 nowplaying-cli 版本；详情见 .state/app.log。"
-                self.changed.emit()
+                if not (self.connected and self._interference_ticks < 5 and self._is_music_client_alive()):
+                    self.apply(None)
+                    self.status = "读取系统播放信息失败，请检查 nowplaying-cli 版本；详情见 .state/app.log。"
+                    self.changed.emit()
                 self._next_poll = now + 2
             self._poll_future = None
         if self._poll_future is None and now >= self._next_poll:
