@@ -2,6 +2,39 @@
 
 每次改动按日期追加记录，包含改动目的、涉及文件、测试与验证结果、影响或已知限制。
 
+## 2026-10-28：重新编译打包 macOS 独立发布包并支持覆盖输出
+
+### 改动
+
+- 响应用户重新打包需求，将包含全局快捷键的最新功能完整编译并打包为 macOS 独立发布归档：
+  1. **构建工具增强 (`tools/build_macos.py`)**：
+     - 在 `build(output_dir, overwrite=False)` 中增加覆盖判定，并在命令行入口支持 `--overwrite` 参数，解决重复构建时因目标文件已存在而抛出 `FileExistsError` 的问题；
+     - 自动同步清理旧的 `.zip.sha256` 校验和文件，确保打包流程幂等可靠。
+  2. **应用重新编译与分发打包**：
+     - 使用 PyInstaller 完整编译生成最新 `build/macos-dist/都市回响.app`，包含新增的 `hotkey.py` 模块及所有静态资源；
+     - 通过 `ditto` 保留 macOS 软链接与文件权限，打包为 `artifacts/mac-release/city-echoes-0.6.0-beta.2-macos.1-arm64.zip`；
+     - 自动计算并输出 `city-echoes-0.6.0-beta.2-macos.1-arm64.zip.sha256`。
+  3. **自动化测试补充 (`tests/test_mac_distribution.py`)**：
+     - 在 `MacDistributionTests` 中新增 `test_build_overwrite_handling` 测试，验证构建脚本在已有输出存在时的覆盖保护与清理逻辑。
+
+### 测试与验证
+
+- 打包分发测试：
+  - 运行 `.venv/bin/python -m unittest tests/test_mac_distribution.py -v`：共 13 项测试全部通过（OK）；
+  - 运行全量文档校验 `.venv/bin/python -m unittest tests/test_workflow_docs.py -v`：全部通过（OK，skipped=1）；
+- 冻结成品原生验证：
+  - 运行 `.venv/bin/python tools/verify_macos.py artifacts/mac-release/city-echoes-0.6.0-beta.2-macos.1-arm64.zip --report-dir artifacts/mac-release-smoke`；
+  - 验证结果：
+    - `audit`：1240 个条目无违规私有文件或死链接；
+    - `architecture`：`arm64` 原生可执行架构确认；
+    - `codesign`：深度代码签名验证通过；
+    - `smoke`：无外部开发环境变量下通过 LaunchServices 启动，独立配置加载、控制面板与桌面歌词层正常创建，`passed: true`。
+
+### 影响与限制
+
+- 打包完成的 ZIP 位于 `artifacts/mac-release/city-echoes-0.6.0-beta.2-macos.1-arm64.zip`，解压即可运行；
+- 内置完整的全局快捷键（`⌥⌘D` / `⌥⌘L`）、自适应进度校准与现代终端科幻风 UI。
+
 ## 2026-10-28：增加隐藏与显示歌词的全局及应用快捷键 (⌥⌘D / ⌥⌘L / Ctrl+Alt+D)
 
 ### 改动

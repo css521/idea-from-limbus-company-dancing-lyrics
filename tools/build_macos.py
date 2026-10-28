@@ -17,14 +17,20 @@ from tools.package_macos import APP_BUNDLE, archive_name, audit_archive, MAC_REL
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def build(output_dir):
+def build(output_dir, overwrite=False):
     if sys.platform != "darwin":
         raise RuntimeError("必须在对应架构的 macOS 环境中构建，Windows 不能交叉生成 Mac 应用")
     architecture = platform.machine()
     output = Path(output_dir).resolve() / archive_name(architecture)
     output.parent.mkdir(parents=True, exist_ok=True)
     if output.exists():
-        raise FileExistsError(f"输出已存在，请使用新目录：{output}")
+        if overwrite:
+            output.unlink()
+            sha = output.with_suffix(".zip.sha256")
+            if sha.exists():
+                sha.unlink()
+        else:
+            raise FileExistsError(f"输出已存在，请使用新目录：{output}")
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     from PySide6.QtCore import QSize
     from PySide6.QtGui import QIcon
@@ -86,4 +92,6 @@ def build(output_dir):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", type=Path, default=ROOT / "artifacts/mac-release")
-    build(parser.parse_args().output_dir)
+    parser.add_argument("--overwrite", action="store_true", help="覆盖已有的打包输出")
+    args = parser.parse_args()
+    build(args.output_dir, overwrite=args.overwrite)

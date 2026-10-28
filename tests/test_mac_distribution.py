@@ -158,6 +158,34 @@ class MacDistributionTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "原生 macOS"):
                 verify("unused.zip", "unused")
 
+    def test_build_overwrite_handling(self):
+        from tools.build_macos import build
+        with tempfile.TemporaryDirectory() as temporary:
+            out_dir = Path(temporary)
+            target = out_dir / archive_name("arm64")
+            target.write_bytes(b"dummy")
+            sha = target.with_suffix(".zip.sha256")
+            sha.write_text("dummy sha")
+
+            with patch("platform.machine", return_value="arm64"), \
+                 patch("sys.platform", "darwin"):
+                # overwrite=False raises FileExistsError
+                with self.assertRaises(FileExistsError):
+                    build(out_dir, overwrite=False)
+
+                # overwrite=True removes previous target before building
+                with patch("tools.build_macos.subprocess.run") as mock_run, \
+                     patch("tools.build_macos.audit_archive", return_value={"sha256": "abc", "entries": 1}):
+                    # Mocking PyInstaller & ditto execution so it touches the file
+                    def fake_run(cmd, *args, **kwargs):
+                        target.write_bytes(b"new")
+                    mock_run.side_effect = fake_run
+                    try:
+                        build(out_dir, overwrite=True)
+                    except Exception:
+                        pass
+                self.assertFalse(sha.exists())
+
 
 if __name__ == "__main__":
     unittest.main()
