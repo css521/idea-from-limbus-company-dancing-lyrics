@@ -90,11 +90,11 @@ def main(argv=None):
             shortcut.activated.connect(lambda step=delta: player.adjust_offset(step))
             shortcuts.append(shortcut)
         if player.source_short == "QQ 音乐":
-            panel.source_label.setText("请打开 QQ 音乐 Mac 版；⌘⌥↑ / ⌘⌥↓ 微调歌词偏移。")
+            panel.source_label.setText("请打开 QQ 音乐 Mac 版；⌘⌥↑ / ⌘⌥↓ 调偏移，⌥⌘D 切换歌词。")
         elif getattr(player, "source_mode", "") == "netease":
-            panel.source_label.setText("请打开网易云 Mac 版；⌘⌥↑ / ⌘⌥↓ 微调歌词偏移。")
+            panel.source_label.setText("请打开网易云 Mac 版；⌘⌥↑ / ⌘⌥↓ 调偏移，⌥⌘D 切换歌词。")
         else:
-            panel.source_label.setText("请打开 QQ 音乐或网易云 Mac 版；⌘⌥↑ / ⌘⌥↓ 微调歌词偏移。")
+            panel.source_label.setText("请打开 QQ 音乐或网易云 Mac 版；⌘⌥↑ / ⌘⌥↓ 调偏移，⌥⌘D 切换歌词。")
         if player._offset_store.error:
             panel.show_notice(player._offset_store.error)
     app.aboutToQuit.connect(lambda: store.save(prefs))

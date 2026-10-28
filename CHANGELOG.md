@@ -2,6 +2,42 @@
 
 每次改动按日期追加记录，包含改动目的、涉及文件、测试与验证结果、影响或已知限制。
 
+## 2026-10-28：增加隐藏与显示歌词的全局及应用快捷键 (⌥⌘D / ⌥⌘L / Ctrl+Alt+D)
+
+### 改动
+
+- 响应用户反馈的“请你增加隐藏 显示歌词的快捷键”需求：
+  1. **跨平台全局热键架构与实现 (`hotkey.py`)**：
+     - 新建系统级热键管理模块 `hotkey.py`，定义 `GlobalHotKey(QObject)` 与统一信号 `activated = Signal()`；
+     - **macOS 全局原生热键**：基于 macOS `Carbon.framework` 的 `RegisterEventHotKey`、`InstallEventHandler`、`UnregisterEventHotKey`、`RemoveEventHandler` 接入系统事件分发器 `GetEventDispatcherTarget()`，**无需用户授权任何辅助功能（Accessibility）或屏幕录制权限**，即开即用且不抢占前台输入焦点；
+     - **Windows 全局原生热键**：基于 `ctypes.windll.user32.RegisterHotKey` / `UnregisterHotKey` 配合 `QAbstractNativeEventFilter` 监听 `WM_HOTKEY (0x0312)` 原生系统消息；
+     - **应用内快捷键双重保障**：为每个配置的按键序列注册 `QShortcut`（`Qt.ShortcutContext.ApplicationShortcut`），确保在不同操作系统焦点和窗口状态下均能可靠触发；
+     - **快捷键组合映射**：
+       - macOS：默认支持 `⌥⌘D` (Option+Command+D) 与 `⌥⌘L` (Option+Command+L)；
+       - Windows：默认支持 `Ctrl+Alt+D` 与 `Ctrl+Alt+L`；
+  2. **控制面板与托盘协同集成 (`controls.py`, `main_mac.py`)**：
+     - 在 `ControlPanel` 初始化中调用 `_setup_hotkeys()` 绑定歌词显隐热键，按下时无缝调用 `toggle_overlay()` 切换歌词悬浮层的可见性；
+     - 控制面板的“隐藏歌词 / 显示歌词”按钮以及系统托盘右键菜单的显隐条目上均补充悬停提示 ToolTip（包含当前系统原生快捷键提示）；
+     - 在控制面板退出和窗口关闭时自动清理系统热键注销钩子；
+     - 在 macOS 界面底部状态提示区展示快捷键说明（`⌥⌘D 切换歌词`）。
+  3. **单元测试与全生命周期覆盖 (`tests/test_hotkey.py`)**：
+     - 编写独立热键测试套件 `HotkeyTests`，测试快捷键格式化显示、全局热键绑定与回调生命周期、控制面板按钮/托盘 ToolTip 关联、macOS Carbon 注册与注销以及 Windows 注册与注销机制。
+
+### 测试与验证
+
+- 自动化单元与跨平台测试：
+  - 运行 `.venv/bin/python -m unittest tests/test_hotkey.py -v`：共 5 项热键测试全部通过（OK）；
+  - 运行全量单元与文档测试套件 `.venv/bin/python -m unittest tests/test_core.py tests/test_workflow_docs.py tests/test_glyph_motion.py tests/test_text_effects.py tests/test_presets.py tests/test_macos.py tests/test_hotkey.py -v`：共 131 项测试全部通过（OK，skipped=1）；
+- 集成验证与烟雾检查：
+  - 运行 `.venv/bin/python main.py --smoke`：全量烟雾测试通过（`passed: true`，3024×1898 Retina 高清物理画布下 16 项动画暖帧 P95 全部达标，音频解码与静音播放完整）；
+- 提交前检查：
+  - 检查代码与文档差异，确保无多余文件与空白错误。
+
+### 影响与限制
+
+- 用户现在在任何应用界面下（无论是打游戏、写代码、浏览网页还是全屏应用中），均可随时按下 `⌥⌘D` 或 `⌥⌘L`（Windows 下按 `Ctrl+Alt+D` 或 `Ctrl+Alt+L`）秒级隐藏或唤醒桌面歌词；
+- 快捷键操作无需给与 macOS 辅助功能特权，体验流畅且安全。
+
 ## 2026-10-20：解决音乐正在播放中途打开 App 时歌词未自动跳转至当前进度的问题
 
 ### 改动

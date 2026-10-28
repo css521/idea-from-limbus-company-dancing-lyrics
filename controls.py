@@ -384,6 +384,11 @@ class ControlPanel(QWidget):
         if self.presets.error:
             self.show_notice(self.presets.error)
         self._fix_combobox_popups()
+        self._setup_hotkeys()
+
+    def _setup_hotkeys(self):
+        from hotkey import setup_lyrics_visibility_hotkey
+        self._lyrics_hotkey = setup_lyrics_visibility_hotkey(self, self.toggle_overlay)
 
     def _fix_combobox_popups(self):
         for combo in self.findChildren(QComboBox):
@@ -1029,11 +1034,15 @@ class ControlPanel(QWidget):
 
     def quit_application(self):
         # Explicit exit must not be cancelled by our ordinary close-to-tray handler.
+        if hasattr(self, "_lyrics_hotkey") and self._lyrics_hotkey:
+            self._lyrics_hotkey.close()
         self._quitting = True
         QApplication.instance().exit(0)
 
     def closeEvent(self, event):
         if self._quitting:
+            if hasattr(self, "_lyrics_hotkey") and self._lyrics_hotkey:
+                self._lyrics_hotkey.close()
             event.accept()
             return
         if self.tray_available or sys.platform == "darwin":
